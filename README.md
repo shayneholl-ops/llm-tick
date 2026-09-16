@@ -69,14 +69,16 @@ python -m pytest -q server_test.py     # or: python server_test.py
 
 ```
 llm-tick/            firmware (PlatformIO, Arduino)
-  llm-tick.ino       pipeline: dual-core render + scene dispatch + button
-  tick.h            shared state (Usage struct, scene table)
-  board.h           verified 1.47B pins + LGFX panel config
-  effects.h/.cpp    8 genart effects + palettes (from genart)
-  ui.cpp            usage + weather scene rendering
-  data.cpp          wifi, mDNS, JSON poll, idle->standby
-  weather_api.*     WeatherAPI.com client
-  secrets.h.example copy to secrets.h (gitignored)
+  src/
+    main.cpp         pipeline: dual-core render + scene dispatch + button
+    tick.h           shared state (Usage struct, scene table)
+    board.h          verified 1.47B pins + LGFX panel config
+    effects.h/.cpp   8 genart effects + palettes (from genart)
+    ui.cpp           usage + weather scene rendering
+    data.cpp         wifi, mDNS, JSON poll, idle->standby
+    weather_api.*    WeatherAPI.com client
+  platformio.ini     build config (native USB, PSRAM, huge_app)
+  secrets.h.example  copy to src/secrets.h (gitignored)
 server.py            LAN usage server (source-agnostic)
 server_test.py       one check for the server
 ```
