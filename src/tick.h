@@ -35,6 +35,7 @@ extern volatile uint32_t g_lastSceneChange;   // set by checkButton / auto-switc
 // ── Provided by llm-tick.ino ─────────────────────────────────────────────────
 extern LGFX lcd;
 extern LGFX_Sprite* sprites[2];
+extern LGFX_Sprite* uiSpr;     // UI draws into the active sprite buffer
 extern uint16_t*    bufs[2];
 extern QueueHandle_t freeQ, readyQ;
 extern volatile int  g_scene;

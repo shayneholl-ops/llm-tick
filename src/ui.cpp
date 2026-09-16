@@ -1,10 +1,14 @@
-// ui.cpp — the two UI scenes, drawn into the active framebuffer on core 0.
-// Fonts are bound to the panel object (`lcd`); the effects write the raw buffer
-// directly, so a UI scene re-initializes the panel driver to its default state
-// before drawing (the consumer's pushSprite then blits the same buffer).
+// ui.cpp — the two UI scenes, drawn into the active sprite framebuffer on core 0.
+// All drawing goes through `ui` (= uiSpr), whose buffer is bound to the current
+// frame via setBuffer(); the consumer's pushSprite then blits it to the panel.
+// (Drawing through the panel `lcd` directly would go to the panel's own buffer,
+//  which is never pushed — that was the black-screen bug.)
 #include "tick.h"
 #include "secrets.h"
 #include <time.h>
+
+// The active UI sprite (buffer bound to the current frame) — all draws target it.
+#define ui (*uiSpr)
 
 static const uint16_t COL_BG     = 0x1082, COL_BAR_BG = 0x2945, COL_TEXT   = 0xC618;
 static const uint16_t COL_BRIGHT = 0xFFFF, COL_BLUE   = 0x3B7F, COL_GREEN  = 0x2E8B;
@@ -25,60 +29,60 @@ static uint16_t barColor(int pct, uint16_t accent, bool warn) {
 static void drawBar(int y, const char* label, int pct, uint16_t accent,
                     const char* footer, bool warn = true) {
   int barX = 14, barW = 144, barH = 12, w = SCREEN_W;
-  lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_TEXT, COL_BG);
-  lcd.setCursor(barX, y);
-  lcd.print(label);
-  lcd.setFont(&fonts::Font4);
-  lcd.setTextColor(COL_BRIGHT, COL_BG);
+  ui.setFont(&fonts::Font2);
+  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setCursor(barX, y);
+  ui.print(label);
+  ui.setFont(&fonts::Font4);
+  ui.setTextColor(COL_BRIGHT, COL_BG);
   char p[8]; snprintf(p, sizeof(p), "%d%%", pct);
-  lcd.setCursor(barX + barW + 2 - lcd.textWidth(p, &fonts::Font4), y - 2);
-  lcd.print(p);
+  ui.setCursor(barX + barW + 2 - ui.textWidth(p, &fonts::Font4), y - 2);
+  ui.print(p);
   int barY = y + 21;
-  lcd.fillRoundRect(barX, barY, barW, barH, 3, COL_BAR_BG);
+  ui.fillRoundRect(barX, barY, barW, barH, 3, COL_BAR_BG);
   int fillW = (barW * pct) / 100;
   if (fillW > barW) fillW = barW;
-  if (fillW > 0) lcd.fillRoundRect(barX, barY, fillW, barH, 3, barColor(pct, accent, warn));
+  if (fillW > 0) ui.fillRoundRect(barX, barY, fillW, barH, 3, barColor(pct, accent, warn));
   if (footer && *footer) {
-    lcd.setFont(&fonts::Font0);
-    lcd.setTextColor(COL_TEXT, COL_BG);
-    lcd.setCursor(barX, barY + 17);
-    lcd.print(footer);
+    ui.setFont(&fonts::Font0);
+    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setCursor(barX, barY + 17);
+    ui.print(footer);
   }
 }
 
 static void statusRow(int dotY, const char* state, bool ok) {
-  lcd.fillCircle(24, dotY, 4, ok ? COL_GREEN : COL_RED);
-  lcd.setFont(&fonts::Font0);
-  lcd.setTextColor(COL_TEXT, COL_BG);
-  lcd.setCursor(34, dotY - 5);
-  lcd.print(state);
-  if (g_u.fetchedAgo < 60) lcd.printf(" %lus", g_u.fetchedAgo);
-  else lcd.printf(" %lum", g_u.fetchedAgo / 60);
+  ui.fillCircle(24, dotY, 4, ok ? COL_GREEN : COL_RED);
+  ui.setFont(&fonts::Font0);
+  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setCursor(34, dotY - 5);
+  ui.print(state);
+  if (g_u.fetchedAgo < 60) ui.printf(" %lus", g_u.fetchedAgo);
+  else ui.printf(" %lum", g_u.fetchedAgo / 60);
   int pages = usagePageCountOf(g_u);
   if (pages > 1)
     for (int p = 0; p < pages; p++) {
       int px = SCREEN_W - 12 - (pages - 1 - p) * 9;
-      if (p == g_u.curPage) lcd.fillCircle(px, dotY, 3, COL_BRIGHT);
-      else lcd.drawCircle(px, dotY, 3, COL_BAR_BG);
+      if (p == g_u.curPage) ui.fillCircle(px, dotY, 3, COL_BRIGHT);
+      else ui.drawCircle(px, dotY, 3, COL_BAR_BG);
     }
 }
 
 static void renderUsage(uint16_t* buf, int w, int h) {
-  lcd.fillScreen(COL_BG);
-  lcd.setFont(&fonts::Font4);
-  lcd.setTextColor(COL_BLUE, COL_BG);
-  lcd.setCursor(14, 8);
-  lcd.print("LLM");
-  lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_TEXT, COL_BG);
-  lcd.setCursor(14 + lcd.textWidth("LLM", &fonts::Font4) + 10, 10);
-  lcd.print(g_u.curPage == 0 ? "Usage" : g_u.curPage == 1 ? "Tokens" : "Models");
-  lcd.drawFastHLine(14, 38, w - 28, 0x3186);
+  ui.fillScreen(COL_BG);
+  ui.setFont(&fonts::Font4);
+  ui.setTextColor(COL_BLUE, COL_BG);
+  ui.setCursor(14, 8);
+  ui.print("LLM");
+  ui.setFont(&fonts::Font2);
+  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setCursor(14 + ui.textWidth("LLM", &fonts::Font4) + 10, 10);
+  ui.print(g_u.curPage == 0 ? "Usage" : g_u.curPage == 1 ? "Tokens" : "Models");
+  ui.drawFastHLine(14, 38, w - 28, 0x3186);
 
   if (!g_u.ok) {
-    lcd.setCursor(14, 150);
-    lcd.print(g_u.stale ? "stale data" : "connecting...");
+    ui.setCursor(14, 150);
+    ui.print(g_u.stale ? "stale data" : "connecting...");
   }
 
   const int slotY[BARS_PER_PAGE] = { 52, 128, 204 };
@@ -98,10 +102,10 @@ static void renderUsage(uint16_t* buf, int w, int h) {
       drawBar(slotY[slot++], "Credits", g_u.spendPct, COL_ORANGE, footer);
     }
   } else if (g_u.curPage == 1 && g_u.ccOk && g_u.tokModelCount > 0) {
-    lcd.setFont(&fonts::Font0);
-    lcd.setTextColor(COL_TEXT, COL_BG);
-    lcd.setCursor(14, 42);
-    lcd.printf("5h %s  $%.0f/h   wk %s", g_u.tokActive, g_u.burnHr, g_u.tokWeek);
+    ui.setFont(&fonts::Font0);
+    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setCursor(14, 42);
+    ui.printf("5h %s  $%.0f/h   wk %s", g_u.tokActive, g_u.burnHr, g_u.tokWeek);
     for (int i = 0; i < BARS_PER_PAGE && i < g_u.tokModelCount; i++) {
       const TokModel& t = g_u.tokModels[i];
       snprintf(footer, sizeof(footer), "%s tok  $%.2f", t.tok, t.cost);
@@ -128,52 +132,54 @@ static int wxIconGlyph(int code) {
 static const char* kIcons[] = { "!", "~", "*", ":", "f", "=", "+", "o" };
 
 static void renderWeather(uint16_t* buf, int w, int h) {
-  lcd.fillScreen(COL_BG);
+  ui.fillScreen(COL_BG);
   const WeatherData& d = g_wxData;
   if (!d.valid) {
-    lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(COL_TEXT, COL_BG);
-    lcd.setCursor(14, 150);
-    lcd.print("standby");
-    lcd.setCursor(14, 172);
-    lcd.print("weather: n/a");
+    ui.setFont(&fonts::Font2);
+    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setCursor(14, 150);
+    ui.print("standby");
+    ui.setCursor(14, 172);
+    ui.print("weather: n/a");
     return;
   }
   char big[8]; snprintf(big, sizeof(big), "%.0f", d.temperature);
-  lcd.setFont(&fonts::Font8);
-  lcd.setTextColor(COL_BRIGHT, COL_BG);
-  lcd.setCursor(16, 60);
-  lcd.print(big);
-  lcd.setFont(&fonts::Font4);
-  lcd.setTextColor(COL_TEXT, COL_BG);
-  lcd.setCursor(16 + lcd.textWidth(big, &fonts::Font8) + 4, 72);
-  lcd.print("C");
-  lcd.setFont(&fonts::Font2);
-  lcd.setCursor(14, 140);
-  lcd.print(kIcons[wxIconGlyph(d.condition_code)]);
-  lcd.setCursor(14 + 16, 140);
-  lcd.print(d.condition.c_str());
-  lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_TEXT, COL_BG);
+  ui.setFont(&fonts::Font8);
+  ui.setTextColor(COL_BRIGHT, COL_BG);
+  ui.setCursor(16, 60);
+  ui.print(big);
+  ui.setFont(&fonts::Font4);
+  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 72);
+  ui.print("C");
+  ui.setFont(&fonts::Font2);
+  ui.setCursor(14, 140);
+  ui.print(kIcons[wxIconGlyph(d.condition_code)]);
+  ui.setCursor(14 + 16, 140);
+  ui.print(d.condition.c_str());
+  ui.setFont(&fonts::Font2);
+  ui.setTextColor(COL_TEXT, COL_BG);
   char l2[24]; snprintf(l2, sizeof(l2), "H %.0f  L %.0f  RH %d%%",
                        d.temp_high, d.temp_low, d.humidity);
-  lcd.setCursor(14, 180);
-  lcd.print(l2);
-  if (d.aqi > 0) { lcd.setFont(&fonts::Font0); lcd.setCursor(14, 200); lcd.printf("AQI %d", d.aqi); }
+  ui.setCursor(14, 180);
+  ui.print(l2);
+  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
   time_t now = time(nullptr);
   struct tm* t = gmtime(&now);
   char clk[16]; strftime(clk, sizeof(clk), "%H:%M", t);
-  lcd.setFont(&fonts::Font4);
-  lcd.setTextColor(COL_BLUE, COL_BG);
-  lcd.setCursor(14, 232);
-  lcd.print(clk);
-  lcd.setFont(&fonts::Font0);
-  lcd.setTextColor(COL_TEXT, COL_BG);
-  lcd.setCursor(14, 254);
-  lcd.print("BOOT: cycle scenes");
+  ui.setFont(&fonts::Font4);
+  ui.setTextColor(COL_BLUE, COL_BG);
+  ui.setCursor(14, 232);
+  ui.print(clk);
+  ui.setFont(&fonts::Font0);
+  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setCursor(14, 254);
+  ui.print("BOOT: cycle scenes");
 }
 
 void renderUiScene(int scene, uint16_t* buf, int w, int h) {
+  // Bind this frame's buffer to the UI sprite, then draw. pushSprite blits it.
+  uiSpr->setBuffer(buf, w, h, 16);
   if (scene == 0) renderUsage(buf, w, h);
   else renderWeather(buf, w, h);
 }

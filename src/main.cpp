@@ -10,6 +10,7 @@
 LGFX lcd;
 LGFX_Sprite spr0(&lcd), spr1(&lcd);
 LGFX_Sprite* sprites[2] = { &spr0, &spr1 };
+LGFX_Sprite* uiSpr = &spr0;   // UI scene draws through this (into the active buffer)
 uint16_t*    bufs[2]    = { nullptr, nullptr };
 Adafruit_NeoPixel led(1, PIN_RGB, NEO_GRB + NEO_KHZ800);
 
@@ -43,6 +44,7 @@ void renderTask(void*) {
     xQueueReceive(freeQ, &idx, portMAX_DELAY);
     int s = g_scene;
     uint32_t t = micros();
+    uiSpr = sprites[idx];   // UI scene draws into this frame's buffer
     if (s < 2) {
       renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     } else {
