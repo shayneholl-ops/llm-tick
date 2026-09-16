@@ -31,20 +31,16 @@ void wifiInit() {
   WiFi.setMinSecurity(WIFI_AUTH_WEP);
   WiFi.setAutoReconnect(true);
   WiFi.setTxPower(WIFI_POWER_13dBm);   // S3s fail auth at full TX power
-  lcd.fillScreen(0x1082);
-  lcd.setTextColor(0xC618, 0x1082);
-  lcd.setFont(&fonts::Font2);
-  lcd.setCursor(14, 140);
-  lcd.print(String("WiFi: ") + String(WIFI_SSID));
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   int tries = 0;
-  while (WiFi.status() != WL_CONNECTED && tries < 40) {
-    delay(500); tries++;
-    lcd.print(".");   // visible progress while WiFi comes up
-  }
-  lcd.print("\n");
+  // NOTE: do NOT draw through the panel `lcd` here — a text op on the panel
+  // triggers flush(), which sends the panel's own (empty) buffer to the screen
+  // and overwrites the pushed frame with black. The pipeline owns the panel.
+  while (WiFi.status() != WL_CONNECTED && tries < 40) { delay(500); tries++; }
   Serial.printf("[tick] WiFi %s (tries=%d)\n",
                 WiFi.status() == WL_CONNECTED ? "UP" : "FAIL", tries);
+  // Re-assert backlight (defensive; it's set in setup, and nothing else touches it)
+  digitalWrite(PIN_BL, HIGH);
 }
 
 void ntpWait() {
