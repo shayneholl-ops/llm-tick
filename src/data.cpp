@@ -38,7 +38,11 @@ void wifiInit() {
   lcd.print(String("WiFi: ") + String(WIFI_SSID));
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   int tries = 0;
-  while (WiFi.status() != WL_CONNECTED && tries < 40) { delay(500); tries++; }
+  while (WiFi.status() != WL_CONNECTED && tries < 40) {
+    delay(500); tries++;
+    lcd.print(".");   // visible progress while WiFi comes up
+  }
+  lcd.print("\n");
   Serial.printf("[tick] WiFi %s (tries=%d)\n",
                 WiFi.status() == WL_CONNECTED ? "UP" : "FAIL", tries);
 }
