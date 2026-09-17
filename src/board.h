@@ -34,7 +34,7 @@ public:
       cfg.pin_cs = 42; cfg.pin_rst = 39; cfg.pin_busy = -1;
       cfg.memory_width = 172; cfg.memory_height = 320;
       cfg.panel_width = 172;  cfg.panel_height = 320;
-      cfg.offset_x = 34; cfg.offset_y = 0; cfg.offset_rotation = 0;
+      cfg.offset_x = 0; cfg.offset_y = 0; cfg.offset_rotation = 0;
       cfg.dummy_read_pixel = 8; cfg.dummy_read_bits = 1; cfg.readable = false;
       cfg.invert = true; cfg.rgb_order = false; cfg.dlen_16bit = false;
       cfg.bus_shared = false;

@@ -82,7 +82,7 @@ void setup() {
   bool ok = lcd.init();
   lcd.setRotation(0);
   pinMode(PIN_BL, OUTPUT);
-  digitalWrite(PIN_BL, HIGH);                // backlight on (GPIO46)
+  digitalWrite(PIN_BL, HIGH);                // backlight on (GPIO46 per 1.47B schematic)
   led.begin();
 
   buildTables();
