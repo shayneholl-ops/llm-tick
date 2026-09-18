@@ -63,15 +63,26 @@ static void copyStr(char* dst, size_t n, const String& s) {
   dst[m] = 0;
 }
 
+// Pct fields may arrive as int OR float (server sends round(x,1)); `v | -1`
+// silently falls back to the default for floats (is<int>() is false), so read
+// them explicitly.
+static int pctOr(JsonDocument& doc, const char* key, int fallback = -1) {
+  JsonVariant v = doc[key];
+  if (v.is<int>() || v.is<float>()) return v.as<int>();
+  return fallback;
+}
+
 static void parseUsage(const String& payload) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
-  if (err || !doc["session_pct"].is<int>()) { g_u.stale = true; return; }
+  // session_pct may arrive as a JSON float (server sends round(x,1)); accept
+  // int OR float, else the whole payload is rejected and the UI stays "stale".
+  if (err || !(doc["session_pct"].is<int>() || doc["session_pct"].is<float>())) { g_u.stale = true; return; }
 
   Usage u = g_u;   // keep curPage / lastFetchMs
   u.ok = true; u.stale = false;
-  u.sessionPct      = doc["session_pct"] | -1;
-  u.weeklyPct      = doc["weekly_pct"] | -1;
+  u.sessionPct      = pctOr(doc, "session_pct");
+  u.weeklyPct      = pctOr(doc, "weekly_pct");
   u.sessionResetMin = doc["session_reset_min"] | 0;
   copyStr(u.weeklyReset, sizeof(u.weeklyReset), doc["weekly_reset_day"].as<String>());
   copyStr(u.status, sizeof(u.status), doc["status"].as<String>());
@@ -112,6 +123,8 @@ static void parseUsage(const String& payload) {
   if (changed) u.dataChangedMs = millis();
   if (u.curPage >= usagePageCountOf(u)) u.curPage = 0;
   g_u = u;
+  Serial.printf("[tick] usage ok: session=%d%% weekly=%d%% models=%d tok=%s\n",
+                u.sessionPct, u.weeklyPct, u.modelCount, u.tokActive);
 }
 
 void fetchUsage() {
@@ -134,6 +147,7 @@ void fetchUsage() {
     else g_u.stale = true;
   } else {
     g_u.stale = true;
+    Serial.printf("[tick] fetch HTTP %d\n", code);
     if (code < 0) resolveServer();   // the server may have moved
   }
   http.end();
