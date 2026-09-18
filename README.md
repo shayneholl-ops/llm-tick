@@ -40,6 +40,25 @@ glass edge, while `240x320 @34,0` covers it edge-to-edge (verified with
 on-board camera fill/half-split tests). If you see a stale strip on one edge,
 that is the symptom: check `offset_x` in `src/board.h`.
 
+**Top-of-glass "noise" (investigated 2026-09-18, closed as optical, not
+electrical):** a hazy/flickering band was reported at the top of the glass.
+Every panel-side measure came back clean:
+- 750 frames @25 fps, whole-panel mean luminance constant (zero flicker).
+- Per-scene sweep (all 10 scenes @25 fps): text always crisp — no random
+  pixel corruption; SPI 80 MHz matches the proven-stable reference machine.
+- Region controls, same clip: only the glass top band varied (frame-delta
+  0.55, slow ±5 drift over 30 s); power button LED (0.016), glass middle
+  (0.011), USB-port area (0.002) all rock-stable.
+- Backlight is plain DC HIGH (Waveshare's demo uses 90 % PWM; DC can't PWM-flicker).
+- Board serial healthy: stable render cadence, no errors, NTP + weather + usage all live.
+
+Conclusion: the only reproducible signal is a *slow* luminance drift confined to
+the glass's reflection zone — i.e. ambient light (dimmable/breathing bulb, PC
+case glow) reflecting off the glass at the viewing angle, perceived as noise.
+If it ever persists at one viewing angle in a dark room (no varying light
+source in the reflection path), re-investigate the panel: grab a phone
+close-up video of the band and re-run the region-delta analysis.
+
 ## Build & flash
 
 ```bash
