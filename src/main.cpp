@@ -57,6 +57,13 @@ void renderTask(void*) {
   }
 }
 
+void cycleScene() {
+  g_scene = (g_scene + 1) % sceneCount();
+  g_lastSceneChange = millis();
+  showLed(g_scene);
+  Serial.printf("[tick] scene -> %d (%s)\n", g_scene, sceneName(g_scene));
+}
+
 // BOOT button: debounced falling edge -> next scene.
 bool lastBtn = HIGH;
 uint32_t lastBtnMs = 0;
@@ -65,11 +72,21 @@ void checkButton() {
   if (b != lastBtn && (millis() - lastBtnMs) > 40) {
     lastBtnMs = millis();
     lastBtn = b;
-    if (b == LOW) {
-      g_scene = (g_scene + 1) % sceneCount();
-      g_lastSceneChange = millis();
-      showLed(g_scene);
-      Serial.printf("[tick] scene -> %d (%s)\n", g_scene, sceneName(g_scene));
+    if (b == LOW) cycleScene();
+  }
+}
+
+// Serial test hook: a "PRESS" line over USB-serial emulates a BOOT button press.
+void checkSerialCmd() {
+  static char buf[16];
+  static int n = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (n >= 5 && strncmp(buf, "PRESS", 5) == 0) cycleScene();
+      n = 0;
+    } else if (n < (int)sizeof(buf) - 1) {
+      buf[n++] = c;
     }
   }
 }
@@ -130,6 +147,7 @@ void loop() {
   static uint32_t t0 = 0, fps_n = 0;
 
   checkButton();
+  checkSerialCmd();
 
   int idx;
   if (xQueueReceive(readyQ, &idx, portMAX_DELAY) == pdTRUE) {

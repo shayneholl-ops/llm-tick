@@ -160,7 +160,9 @@ void fetchUsage() {
 }
 
 void refreshWeather() {
-  if (g_wx.fetch()) g_wxData = g_wx.get();
+  bool ok = g_wx.fetch();
+  if (ok) g_wxData = g_wx.get();
+  Serial.printf("[tick] wx fetch %s (temp %.0fC)\n", ok ? "ok" : "FAIL", ok ? g_wxData.temperature : 0.0f);
 }
 
 int usagePageCountOf(const Usage& u) {
