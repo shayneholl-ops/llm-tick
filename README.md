@@ -52,9 +52,11 @@ Every panel-side measure came back clean:
 - Backlight is plain DC HIGH (Waveshare's demo uses 90 % PWM; DC can't PWM-flicker).
 - Board serial healthy: stable render cadence, no errors, NTP + weather + usage all live.
 
-Conclusion: the only reproducible signal is a *slow* luminance drift confined to
-the glass's reflection zone — i.e. ambient light (dimmable/breathing bulb, PC
-case glow) reflecting off the glass at the viewing angle, perceived as noise.
+Conclusion: the only reproducible signal is a *slow* luminance meander
+(±4–5 %, no fast flicker) confined to the glass's reflection zone — a
+2 h on-unit sentinel reproduced it in 19/19 idle cycles. Consistent with
+ambient light (dimmable/breathing bulb, PC case glow) reflecting off the
+glass at the viewing angle, perceived as noise.
 If it ever persists at one viewing angle in a dark room (no varying light
 source in the reflection path), re-investigate the panel: grab a phone
 close-up video of the band and re-run the region-delta analysis.
