@@ -25,9 +25,20 @@ One small display that shows **your LLM usage live**:
 
 ## Hardware truth (1.47B)
 
-Panel/SPI pins match the base 1.47, but **backlight is GPIO46** (base board
-uses 48). Drive `PIN_BL` HIGH after init — it defaults off. Native USB-Serial
-JTAG: `VID 0x303A / PID 0x1001`.
+Panel/SPI pins match the base 1.47. **The backlight pin differs per unit:** the
+1.47B schematic says GPIO46, but the unit this was built against lights the
+backlight only on **GPIO48** — verified on hardware with a blink matrix (46 and
+47 do nothing). If your panel stays dark, blink-test 46/48 before chasing
+anything else and set `PIN_BL` in `src/board.h`. Drive it HIGH after
+`lcd.init()` — it defaults off via a 10K gate pulldown. Native USB-Serial JTAG:
+`VID 0x303A / PID 0x1001`.
+
+**Panel geometry:** the 172-wide glass is centered in the ST7789's 240-wide RAM
+(`offset_x 34`), not at origin as some references claim — on the unit this was
+built against, a full `172x320 @0,0` push left a ~20%-wide stale strip at the
+glass edge, while `240x320 @34,0` covers it edge-to-edge (verified with
+on-board camera fill/half-split tests). If you see a stale strip on one edge,
+that is the symptom: check `offset_x` in `src/board.h`.
 
 ## Build & flash
 

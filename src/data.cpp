@@ -41,6 +41,10 @@ void wifiInit() {
                 WiFi.status() == WL_CONNECTED ? "UP" : "FAIL", tries);
   // Re-assert backlight (defensive; it's set in setup, and nothing else touches it)
   digitalWrite(PIN_BL, HIGH);
+  // GPIO46 is NOT the backlight on this unit (blink-matrix confirmed 48) — hold it
+  // LOW so it can't fight the BL net.
+  pinMode(46, OUTPUT);
+  digitalWrite(46, LOW);
 }
 
 void ntpWait() {
