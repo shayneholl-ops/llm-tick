@@ -177,9 +177,13 @@ void tickLogic() {
   unsigned long now = millis();
   g_u.fetchedAgo = (now - g_u.lastFetchMs) / 1000;
 
-  // Poll cadence: 60s normally, 10s after a failure, immediately after a switch.
+  // Poll cadence: 60s normally, 10s after a failure. A scene switch refreshes
+  // promptly, but at most once per 30 s: hammering BOOT in a tight loop must
+  // not burst the wifi RX path (2026-09-19: ~10 fetches/min crash-looped the
+  // driver's ebuf pool on EVERY build, the pristine 2026-09-18 one included).
   unsigned long interval = (g_u.ok && !g_u.stale) ? FETCH_INTERVAL : 10000;
-  if (now - g_u.lastFetchMs > interval || (now - g_lastSceneChange) < 500)
+  if (now - g_u.lastFetchMs > interval ||
+      ((now - g_lastSceneChange) < 500 && (now - g_u.lastFetchMs) > 30000))
     fetchUsage();
 
   // IDLE -> standby: usage data unchanged for 90s and not just switched back.
@@ -201,8 +205,14 @@ void tickLogic() {
     Serial.println("[tick] activity -> usage");
   }
 
-  if (g_scene == 1 && (now - g_lastSceneChange < 500 || g_wx.needsUpdate()))
+  // Weather: same 30 s anti-burst gate on the on-switch refresh (HTTPS is the
+  // heaviest RX load the driver gets); the 30-min needsUpdate cadence stays.
+  static unsigned long lastWxRefresh = 0;
+  if (g_scene == 1 &&
+      (((now - g_lastSceneChange) < 500 && now - lastWxRefresh > 30000) || g_wx.needsUpdate())) {
     refreshWeather();
+    lastWxRefresh = now;
+  }
 
   if (WiFi.status() != WL_CONNECTED) {
     if (now - g_lastReconnect > g_reconnectBackoff) {

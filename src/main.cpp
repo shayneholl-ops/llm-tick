@@ -25,6 +25,54 @@ volatile uint32_t g_renderUs = 0;
 
 QueueHandle_t freeQ, readyQ;   // carry buffer indices (0/1) between the two cores
 
+// ── DIAGNOSTIC (top-band flicker hunt, 2026-09-19) ────────────────────────────
+// Extra serial commands (sent as one line each; see checkSerialCmd):
+//   LED 0|1      WS2812 ring off / restore scene color
+//   BL  0|25|50|100   backlight duty: off / 25% / 50% / full (1.5 kHz software PWM)
+//   PAT 0..6     0=normal scenes; 1=mid gray; 2=white top 24 rows / black rest;
+//                3=black top 24 / gray rest; 4=all black; 5=all white;
+//                6=black top 24 + black rows 150-173 / gray rest (position control)
+//   ST           print diagnostic state
+volatile int g_diagLed = 1;
+volatile int g_diagBlDuty = 100;   // 0 = off, 100 = full
+volatile int g_diagPat = 0;
+
+static const uint16_t kPatGray = 0x7BEF;
+static void fillPattern(uint16_t* buf, int w, int h, int pat) {
+  uint16_t topC = kPatGray, restC = kPatGray, midC = kPatGray;
+  switch (pat) {
+    case 1:  topC = restC = kPatGray; break;
+    case 2:  topC = 0xFFFF; restC = 0x0000; break;
+    case 3:  topC = 0x0000; restC = kPatGray; break;
+    case 4:  topC = restC = 0x0000; break;
+    case 5:  topC = restC = 0xFFFF; break;
+    case 6:  topC = 0x0000; midC = 0x0000; restC = kPatGray; break;
+  }
+  for (int y = 0; y < h; y++) {
+    uint16_t c = restC;
+    if (y < 24) c = topC;
+    else if (pat == 6 && y >= 150 && y < 174) c = midC;
+    uint16_t* row = buf + (size_t)y * w;
+    for (int x = 0; x < w; x++) row[x] = c;
+  }
+}
+
+// Backlight driver: 200 Hz, 5-substep PWM via vTaskDelayUntil (1 ms ticks).
+// NO delayMicroseconds — it busy-spins and a 100%-duty spin starves core 1
+// (that froze the board on first try). 200 Hz aliases to DC in 4/25 fps
+// camera captures (200/4=50, 200/25=8 exact) and is above flicker fusion.
+// Duty 100 = pin HIGH every step (== plain HIGH); duty 0 = LOW every step.
+static void blTask(void*) {
+  TickType_t last = xTaskGetTickCount();
+  int step = 0;
+  for (;;) {
+    int onSteps = (g_diagBlDuty * 5) / 100;
+    digitalWrite(PIN_BL, step < onSteps ? HIGH : LOW);
+    step = (step + 1) % 5;
+    vTaskDelayUntil(&last, 1);   // 1 ms step; 5 steps = 5 ms period = 200 Hz
+  }
+}
+
 void showLed(int s) {
   uint32_t c;
   if (s == 0) c = led.Color(0, 24, 24);        // usage: blue
@@ -45,12 +93,22 @@ void renderTask(void*) {
     int s = g_scene;
     uint32_t t = micros();
     uiSpr = sprites[idx];   // UI scene draws into this frame's buffer
-    if (s < 2) {
+    if (g_diagPat != 0) {
+      fillPattern(bufs[idx], SCREEN_W, SCREEN_H, g_diagPat);
+    } else if (s < 2) {
       renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     } else {
       Inputs in = { frame, g_ax, g_ay, g_az };
       EFFECTS[s - 2].fn(bufs[idx], SCREEN_W, SCREEN_H, in, PAL565[EFFECTS[s - 2].palette]);
     }
+    // Top-band flicker guard (2026-09-19): with offset_rotation 2, buffer row 0
+    // lands on the ST7789's last RAM row (319), which refreshes with a per-scan
+    // luminance quirk (visible as a slow hazy band at the glass top edge).
+    // Mirror row 0 from row 1 so the quirk row's content is identical to its
+    // neighbor -> its ~5% modulation is imperceptible. (UI scenes already have
+    // background there; this makes the effects consistent too.)
+    // TEST-C: guard memcpy temporarily disabled (crash-bisect 2026-09-19).
+    // memcpy(bufs[idx], bufs[idx] + SCREEN_W, SCREEN_W * sizeof(uint16_t));
     g_renderUs = micros() - t;
     frame++;
     xQueueSend(readyQ, &idx, portMAX_DELAY);
@@ -77,13 +135,39 @@ void checkButton() {
 }
 
 // Serial test hook: a "PRESS" line over USB-serial emulates a BOOT button press.
+// DIAGNOSTIC (2026-09-19): also "LED 0|1", "BL 0|25|50|100", "PAT 0..6", "ST".
 void checkSerialCmd() {
   static char buf[16];
   static int n = 0;
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
+      if (n > 0) buf[n] = 0;   // terminate so numeric parses can't read stale bytes
       if (n >= 5 && strncmp(buf, "PRESS", 5) == 0) cycleScene();
+      else if (n >= 4 && strncmp(buf, "LED", 3) == 0) {
+        if (atoi(buf + 4) == 0) {
+          led.setPixelColor(0, 0); led.show(); g_diagLed = 0;
+          Serial.println("[diag] LED off");
+        } else {
+          g_diagLed = 1; showLed(g_scene);
+          Serial.println("[diag] LED on");
+        }
+      }
+      else if (n >= 3 && strncmp(buf, "BL", 2) == 0) {
+        int v = atoi(buf + 3);
+        g_diagBlDuty = (v == 0 || v == 25 || v == 50 || v == 100) ? v : 100;
+        Serial.printf("[diag] BL duty=%d\n", g_diagBlDuty);
+      }
+      else if (n >= 4 && strncmp(buf, "PAT", 3) == 0) {
+        int v = atoi(buf + 4);
+        g_diagPat = (v >= 0 && v <= 6) ? v : 0;
+        Serial.printf("[diag] PAT %d\n", g_diagPat);
+      }
+      else if (n >= 2 && strncmp(buf, "ST", 2) == 0) {
+        Serial.printf("[diag] scene=%d(%s) blDuty=%d led=%d pat=%d render=%lums\n",
+                      g_scene, sceneName(g_scene), g_diagBlDuty, g_diagLed, g_diagPat,
+                      (unsigned long)(g_renderUs / 1000));
+      }
       n = 0;
     } else if (n < (int)sizeof(buf) - 1) {
       buf[n++] = c;
@@ -100,6 +184,11 @@ void setup() {
   lcd.setRotation(0);
   pinMode(PIN_BL, OUTPUT);
   digitalWrite(PIN_BL, HIGH);                // backlight on (GPIO48 per on-unit blink test)
+  { // TEST-B: blTask temporarily disabled (crash-bisect 2026-09-19).
+    // TaskHandle_t bt = nullptr;
+    // BaseType_t rc = xTaskCreatePinnedToCore(blTask, "blpwm", 4096, nullptr, 3, &bt, 1);
+    // Serial.printf("[tick] blTask rc=%d\n", (int)rc);
+  }
   led.begin();
 
   buildTables();

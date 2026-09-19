@@ -46,6 +46,11 @@ public:
       // relative to the user's mount, verified 2026-09-17): flip the panel.
       // The centered 172-wide window is unaffected by the 180° flip, so the
       // @34,0 window position is unchanged.
+      // NOTE (2026-09-19): the ST7789's LAST RAM row (319) refreshes with a
+      // per-scan luminance quirk (gate-edge effect). With this unit's 180-deg
+      // mount, rotation 2 puts row 319 at the visible TOP edge -> the perceived
+      // "noise band". main.cpp guards against it by mirroring buffer row 0 from
+      // row 1 so the quirk row's content matches its neighbor (imperceptible).
       cfg.offset_x = 34; cfg.offset_y = 0; cfg.offset_rotation = 2;
       cfg.dummy_read_pixel = 8; cfg.dummy_read_bits = 1; cfg.readable = false;
       cfg.invert = true; cfg.rgb_order = false; cfg.dlen_16bit = false;

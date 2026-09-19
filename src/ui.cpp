@@ -68,24 +68,30 @@ static void statusRow(int dotY, const char* state, bool ok) {
     }
 }
 
+// Top-band flicker fix (2026-09-19): this ST7789's gate-array end (last RAM
+// rows, at the glass top edge on this 180-deg-mounted unit) meanders in
+// luminance by ~5% (stochastic, needs backlight on, invisible on a uniform
+// field). Keep display rows 0-59 PURE BACKGROUND in the UI scenes so the
+// meander has no edges to modulate -> imperceptible. See HANDOFF.md.
 static void renderUsage(uint16_t* buf, int w, int h) {
   ui.fillScreen(COL_BG);
   ui.setFont(&fonts::Font4);
   ui.setTextColor(COL_BLUE, COL_BG);
-  ui.setCursor(14, 8);
+  ui.setCursor(14, 64);
   ui.print("LLM");
   ui.setFont(&fonts::Font2);
   ui.setTextColor(COL_TEXT, COL_BG);
-  ui.setCursor(14 + ui.textWidth("LLM", &fonts::Font4) + 10, 10);
+  ui.setCursor(14 + ui.textWidth("LLM", &fonts::Font4) + 10, 66);
   ui.print(g_u.curPage == 0 ? "Usage" : g_u.curPage == 1 ? "Tokens" : "Models");
-  ui.drawFastHLine(14, 38, w - 28, 0x3186);
+  ui.drawFastHLine(14, 94, w - 28, 0x3186);
 
   if (!g_u.ok) {
     ui.setCursor(14, 150);
     ui.print(g_u.stale ? "stale data" : "connecting...");
   }
 
-  const int slotY[BARS_PER_PAGE] = { 52, 128, 204 };
+  const int slotY[BARS_PER_PAGE] = { 104, 176, 248 };
+  const int slotYtok[BARS_PER_PAGE] = { 112, 184, 256 };   // tokens page has an info row
   char footer[32];
 
   if (g_u.curPage == 0) {
@@ -104,12 +110,12 @@ static void renderUsage(uint16_t* buf, int w, int h) {
   } else if (g_u.curPage == 1 && g_u.ccOk && g_u.tokModelCount > 0) {
     ui.setFont(&fonts::Font0);
     ui.setTextColor(COL_TEXT, COL_BG);
-    ui.setCursor(14, 42);
+    ui.setCursor(14, 96);
     ui.printf("5h %s  $%.0f/h   wk %s", g_u.tokActive, g_u.burnHr, g_u.tokWeek);
     for (int i = 0; i < BARS_PER_PAGE && i < g_u.tokModelCount; i++) {
       const TokModel& t = g_u.tokModels[i];
       snprintf(footer, sizeof(footer), "%s tok  $%.2f", t.tok, t.cost);
-      drawBar(slotY[i], t.name, t.pct, MODEL_ACCENTS[i % 4], footer, false);
+      drawBar(slotYtok[i], t.name, t.pct, MODEL_ACCENTS[i % 4], footer, false);
     }
   } else {
     int first = (g_u.curPage - 1 - (g_u.ccOk && g_u.tokModelCount > 0 ? 1 : 0)) * BARS_PER_PAGE;
@@ -120,7 +126,7 @@ static void renderUsage(uint16_t* buf, int w, int h) {
       drawBar(slotY[i], label, m.pct, MODEL_ACCENTS[(first + i) % 4], footer);
     }
   }
-  statusRow(h - 24, g_u.ok ? g_u.status : "wait", g_u.ok);
+  statusRow(h - 16, g_u.ok ? g_u.status : "wait", g_u.ok);
 }
 
 static int wxIconGlyph(int code) {
@@ -146,11 +152,11 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   char big[8]; snprintf(big, sizeof(big), "%.0f", d.temperature);
   ui.setFont(&fonts::Font8);
   ui.setTextColor(COL_BRIGHT, COL_BG);
-  ui.setCursor(16, 60);
+  ui.setCursor(16, 72);
   ui.print(big);
   ui.setFont(&fonts::Font4);
   ui.setTextColor(COL_TEXT, COL_BG);
-  ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 72);
+  ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 84);
   ui.print("C");
   ui.setFont(&fonts::Font2);
   ui.setCursor(14, 140);
