@@ -44,6 +44,10 @@ that is the symptom: check `offset_x` in `src/board.h`.
 electrical):** a hazy/flickering band was reported at the top of the glass.
 Every panel-side measure came back clean:
 - 750 frames @25 fps, whole-panel mean luminance constant (zero flicker).
+- 60 fps native capture (300 frames, 5 s): lag-1 autocorrelation of the level
+  series is 0.97 in every region — no mains/PWM-frequency flicker resolvable;
+  the band's total 5 s variation is 0.17 %, below the perceptual flicker
+  threshold.
 - Per-scene sweep (all 10 scenes @25 fps): text always crisp — no random
   pixel corruption; SPI 80 MHz matches the proven-stable reference machine.
 - Region controls, same clip: only the glass top band varied (frame-delta
