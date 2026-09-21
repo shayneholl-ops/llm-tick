@@ -32,6 +32,22 @@ extern Usage g_u;
 extern volatile float g_ax, g_ay, g_az;
 extern volatile uint32_t g_lastSceneChange;   // set by checkButton / auto-switch
 
+// ── Backlight white balance ───────────────────────────────────────────────────
+// This unit's backlight is ONE cool-cast (blue/violet-rich) LED; no white
+// channel exists (BLX polarity test 2026-09-19). Camera calibration of the
+// 50% gray field measured the cast ≈ R0.89/G0.95/B1.16; the split-anchor
+// test (white half locking the camera AWB in-frame) showed round 1
+// (G×15/16, B×12/16) left the dark canvas at B/R≈1.19, so round 2
+// (G×14/16, B×10/16) pre-shifts content toward green so that neutral
+// renders neutral on this glass. Applied to every UI/effect color; the
+// raw WB calibration fields (main.cpp) stay uncorrected on purpose.
+static inline uint16_t wb565(uint16_t c) {
+  int r = (c >> 11) & 31;
+  int g = ((c >> 5) & 63) * 14 / 16;
+  int b = (c & 31) * 10 / 16;
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
 // ── Provided by llm-tick.ino ─────────────────────────────────────────────────
 extern LGFX lcd;
 extern LGFX_Sprite* sprites[2];
@@ -45,6 +61,7 @@ void showLed(int s);
 
 // ── ui.cpp ───────────────────────────────────────────────────────────────────
 void renderUiScene(int scene, uint16_t* buf, int w, int h);
+void uiWbInit();   // rewrite the UI palette with wb565(); call in setup()
 
 // ── data.cpp ────────────────────────────────────────────────────────────────
 void  wifiInit();

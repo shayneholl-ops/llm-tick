@@ -10,18 +10,38 @@
 // The active UI sprite (buffer bound to the current frame) — all draws target it.
 #define ui (*uiSpr)
 
-static const uint16_t COL_BG     = 0x1082, COL_BAR_BG = 0x2945, COL_TEXT   = 0xC618;
-static const uint16_t COL_BRIGHT = 0xFFFF, COL_BLUE   = 0x3B7F, COL_GREEN  = 0x2E8B;
-static const uint16_t COL_YELLOW = 0xFE60, COL_RED    = 0xF800, COL_CYAN   = 0x07FA;
-static const uint16_t COL_PURPLE = 0xA95F, COL_ORANGE = 0xFCC0, COL_MINT   = 0x2FEB;
-static const uint16_t MODEL_ACCENTS[4] = { COL_PURPLE, COL_MINT, COL_CYAN, COL_GREEN };
-// Ferrari design language (DESIGN-ferrari.md) for the weather scene: near-black
-// canvas (#181818 — "never pure black"), white ink, gray body, one scarce
-// Rosso Corsa accent.
-static const uint16_t COL_INK   = 0xFFFF;  // #ffffff display ink
-static const uint16_t COL_BODY  = 0x94B2;  // #969696 body gray
-static const uint16_t COL_MUTED = 0x632C;  // #666666 muted
-static const uint16_t COL_ROSSO = 0xD943;  // #da291c Rosso Corsa (scarce)
+// UI palette — design values (D_*) and runtime white-balanced copies (COL_*).
+// wb565() (tick.h) compensates this unit's cool-cast backlight: the near-
+// neutral colors below pre-shift toward green so they render neutral on the
+// glass. Ferrari language for the weather scene (DESIGN-ferrari.md):
+// near-black canvas (#181818 — "never pure black"), white ink, gray body,
+// one scarce Rosso Corsa accent.
+static const uint16_t D_BG     = 0x1082, D_BAR_BG = 0x2945, D_TEXT   = 0xC618;
+static const uint16_t D_BRIGHT = 0xFFFF, D_BLUE   = 0x3B7F, D_GREEN  = 0x2E8B;
+static const uint16_t D_YELLOW = 0xFE60, D_RED    = 0xF800, D_CYAN   = 0x07FA;
+static const uint16_t D_PURPLE = 0xA95F, D_ORANGE = 0xFCC0, D_MINT   = 0x2FEB;
+static const uint16_t D_INK    = 0xFFFF;  // #ffffff display ink
+static const uint16_t D_BODY   = 0x94B2;  // #969696 body gray
+static const uint16_t D_MUTED  = 0x632C;  // #666666 muted
+static const uint16_t D_ROSSO  = 0xD943;  // #da291c Rosso Corsa (scarce)
+static uint16_t COL_BG     = D_BG, COL_BAR_BG = D_BAR_BG, COL_TEXT   = D_TEXT;
+static uint16_t COL_BRIGHT = D_BRIGHT, COL_BLUE = D_BLUE, COL_GREEN = D_GREEN;
+static uint16_t COL_YELLOW = D_YELLOW, COL_RED = D_RED, COL_CYAN = D_CYAN;
+static uint16_t COL_PURPLE = D_PURPLE, COL_ORANGE = D_ORANGE, COL_MINT = D_MINT;
+static uint16_t COL_INK = D_INK, COL_BODY = D_BODY, COL_MUTED = D_MUTED, COL_ROSSO = D_ROSSO;
+static uint16_t MODEL_ACCENTS[4];
+// Rewrite every runtime color with the backlight's white-balance gains; call
+// once in setup() before the first frame is rendered.
+void uiWbInit() {
+  COL_BG = wb565(D_BG);     COL_BAR_BG = wb565(D_BAR_BG); COL_TEXT = wb565(D_TEXT);
+  COL_BRIGHT = wb565(D_BRIGHT); COL_BLUE = wb565(D_BLUE); COL_GREEN = wb565(D_GREEN);
+  COL_YELLOW = wb565(D_YELLOW); COL_RED = wb565(D_RED);   COL_CYAN = wb565(D_CYAN);
+  COL_PURPLE = wb565(D_PURPLE); COL_ORANGE = wb565(D_ORANGE); COL_MINT = wb565(D_MINT);
+  COL_INK = wb565(D_INK);   COL_BODY = wb565(D_BODY);   COL_MUTED = wb565(D_MUTED);
+  COL_ROSSO = wb565(D_ROSSO);
+  MODEL_ACCENTS[0] = COL_PURPLE; MODEL_ACCENTS[1] = COL_MINT;
+  MODEL_ACCENTS[2] = COL_CYAN;   MODEL_ACCENTS[3] = COL_GREEN;
+}
 
 const int BARS_PER_PAGE = 3;
 
@@ -90,7 +110,7 @@ static void renderUsage(uint16_t* buf, int w, int h) {
   ui.setTextColor(COL_TEXT, COL_BG);
   ui.setCursor(14 + ui.textWidth("LLM", &fonts::Font4) + 10, 66);
   ui.print(g_u.curPage == 0 ? "Usage" : g_u.curPage == 1 ? "Tokens" : "Models");
-  ui.drawFastHLine(14, 94, w - 28, 0x3186);
+  ui.drawFastHLine(14, 94, w - 28, wb565(0x3186));
 
   if (!g_u.ok) {
     ui.setCursor(14, 150);
@@ -173,12 +193,12 @@ static uint16_t stepToward565(uint16_t cur, uint16_t tgt) {
   return (r << 11) | (g << 5) | b;
 }
 static uint16_t wxBgTarget(const WeatherData& d) {
-  if (!d.valid) return 0x18C3;                        // #181818 base canvas
+  if (!d.valid) return wb565(0x18C3);                  // #181818 base canvas
   int code = d.condition_code;
-  if (code < 1000)  return d.is_day ? 0x20E2 : 0x18C3;  // clear: warm / neutral
-  if (code < 2000)  return d.is_day ? 0x18E3 : 0x10A2;  // cloud: neutral gray
-  if (code < 4000)  return d.is_day ? 0x18EC : 0x1083;  // rain: cool blue
-  return d.is_day ? 0x2125 : 0x18E5;                      // snow: cool, lighter
+  if (code < 1000)  return d.is_day ? wb565(0x20E2) : wb565(0x18C3);  // clear: warm / neutral
+  if (code < 2000)  return d.is_day ? wb565(0x18E3) : wb565(0x10A2);  // cloud: neutral gray
+  if (code < 4000)  return d.is_day ? wb565(0x18EC) : wb565(0x1083);  // rain: cool blue
+  return d.is_day ? wb565(0x2125) : wb565(0x18E5);        // snow: cool, lighter
 }
 static uint16_t g_wxBg = COL_BG;   // current (possibly mid-transition) background
 
@@ -192,10 +212,10 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   // luminance flip is kept as a safety net only — every palette entry is
   // dark, so the light set is what actually renders.
   bool bright = lum565(g_wxBg) > 128;
-  uint16_t numCol  = bright ? 0x0841 : COL_INK;    // big temperature
-  uint16_t subCol  = bright ? 0x30C6 : COL_BODY;   // small text
-  uint16_t muteCol = bright ? 0x30E6 : COL_MUTED;  // captions / footer
-  uint16_t clkCol  = bright ? 0x0040 : COL_ROSSO;  // the one accent
+  uint16_t numCol  = bright ? wb565(0x0841) : COL_INK;    // big temperature
+  uint16_t subCol  = bright ? wb565(0x30C6) : COL_BODY;   // small text
+  uint16_t muteCol = bright ? wb565(0x30E6) : COL_MUTED;  // captions / footer
+  uint16_t clkCol  = bright ? wb565(0x0040) : COL_ROSSO;  // the one accent
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
     ui.setTextColor(numCol, g_wxBg);
