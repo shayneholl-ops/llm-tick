@@ -15,6 +15,13 @@ static const uint16_t COL_BRIGHT = 0xFFFF, COL_BLUE   = 0x3B7F, COL_GREEN  = 0x2
 static const uint16_t COL_YELLOW = 0xFE60, COL_RED    = 0xF800, COL_CYAN   = 0x07FA;
 static const uint16_t COL_PURPLE = 0xA95F, COL_ORANGE = 0xFCC0, COL_MINT   = 0x2FEB;
 static const uint16_t MODEL_ACCENTS[4] = { COL_PURPLE, COL_MINT, COL_CYAN, COL_GREEN };
+// Ferrari design language (DESIGN-ferrari.md) for the weather scene: near-black
+// canvas (#181818 — "never pure black"), white ink, gray body, one scarce
+// Rosso Corsa accent.
+static const uint16_t COL_INK   = 0xFFFF;  // #ffffff display ink
+static const uint16_t COL_BODY  = 0x94B2;  // #969696 body gray
+static const uint16_t COL_MUTED = 0x632C;  // #666666 muted
+static const uint16_t COL_ROSSO = 0xD943;  // #da291c Rosso Corsa (scarce)
 
 const int BARS_PER_PAGE = 3;
 
@@ -137,11 +144,12 @@ static int wxIconGlyph(int code) {
 }
 static const char* kIcons[] = { "!", "~", "*", ":", "f", "=", "+", "o" };
 
-// Dynamic standby background (2026-09-19): the color follows the ACTUAL
-// conditions — WeatherAPI day/night x clear/cloudy/rain/snow — and eases
-// toward the new target over ~1 s (UI scenes render every frame), so the
-// board drifts from day-sky to night-navy when the sun goes down. Rows 0-59
-// stay one uniform color, so the top-band flicker fix is unaffected.
+// Weather standby background (Ferrari design language, DESIGN-ferrari.md):
+// the canvas stays near-black (#181818 — "never pure black") and only takes
+// a subtle per-condition tint — day/night x clear/cloudy/rain/snow — so the
+// scene still breathes with the real weather without becoming a light
+// source. All targets sit far below the lum-128 flip, so type is always the
+// light set. Rows 0-59 stay one uniform color: top-band flicker fix intact.
 static int lum565(uint16_t c) {
   int r = ((c >> 11) & 31) << 3 | ((c >> 11) & 31) >> 2;
   int g = ((c >> 5) & 63) << 2 | ((c >> 5) & 63) >> 4;
@@ -165,12 +173,12 @@ static uint16_t stepToward565(uint16_t cur, uint16_t tgt) {
   return (r << 11) | (g << 5) | b;
 }
 static uint16_t wxBgTarget(const WeatherData& d) {
-  if (!d.valid) return COL_BG;
+  if (!d.valid) return 0x18C3;                        // #181818 base canvas
   int code = d.condition_code;
-  if (code < 1000)  return d.is_day ? 0x7E4C : 0x0044;  // clear / partly
-  if (code < 2000)  return d.is_day ? 0xC638 : 0x28C6;  // fog / cloudy
-  if (code < 4000)  return d.is_day ? 0x5B70 : 0x1085;  // rain / showers / thunder
-  return d.is_day ? 0xFFF8 : 0x3909;                   // snow
+  if (code < 1000)  return d.is_day ? 0x20E2 : 0x18C3;  // clear: warm / neutral
+  if (code < 2000)  return d.is_day ? 0x18E3 : 0x10A2;  // cloud: neutral gray
+  if (code < 4000)  return d.is_day ? 0x18EC : 0x1083;  // rain: cool blue
+  return d.is_day ? 0x2125 : 0x18E5;                      // snow: cool, lighter
 }
 static uint16_t g_wxBg = COL_BG;   // current (possibly mid-transition) background
 
@@ -179,20 +187,23 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   uint16_t target = wxBgTarget(d);
   if (g_wxBg != target) g_wxBg = stepToward565(g_wxBg, target);
   ui.fillScreen(g_wxBg);
-  // Text colors track the background's luminance so the scene stays readable
-  // over both the bright day palette and the dark night palette.
+  // Type per the Ferrari set: white ink, gray body, muted captions, and the
+  // one scarce Rosso accent on the clock (the "race position" role). The
+  // luminance flip is kept as a safety net only — every palette entry is
+  // dark, so the light set is what actually renders.
   bool bright = lum565(g_wxBg) > 128;
-  uint16_t numCol = bright ? 0x0841 : COL_BRIGHT;  // big temperature
-  uint16_t subCol = bright ? 0x30C6 : COL_TEXT;    // small text
-  uint16_t clkCol = bright ? 0x0040 : COL_BLUE;    // clock
+  uint16_t numCol  = bright ? 0x0841 : COL_INK;    // big temperature
+  uint16_t subCol  = bright ? 0x30C6 : COL_BODY;   // small text
+  uint16_t muteCol = bright ? 0x30E6 : COL_MUTED;  // captions / footer
+  uint16_t clkCol  = bright ? 0x0040 : COL_ROSSO;  // the one accent
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
     ui.setTextColor(numCol, g_wxBg);
     ui.setCursor(14, 150);
-    ui.print("standby");
-    ui.setTextColor(subCol, g_wxBg);
+    ui.print("STANDBY");
+    ui.setTextColor(muteCol, g_wxBg);
     ui.setCursor(14, 172);
-    ui.print("weather: n/a");
+    ui.print("WEATHER: N/A");
     return;
   }
   char big[8]; snprintf(big, sizeof(big), "%.0f", d.temperature);
@@ -204,18 +215,24 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   ui.setTextColor(subCol, g_wxBg);
   ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 84);
   ui.print("C");
+  // Caption style: uppercase (the bitmap fonts have no tracking).
+  char cond[19];
+  int cn = d.condition.length(); if (cn > 18) cn = 18;
+  for (int i = 0; i < cn; i++) cond[i] = (char)toupper((unsigned char)d.condition[i]);
+  cond[cn] = 0;
   ui.setFont(&fonts::Font2);
+  ui.setTextColor(subCol, g_wxBg);
   ui.setCursor(14, 140);
   ui.print(kIcons[wxIconGlyph(d.condition_code)]);
   ui.setCursor(14 + 16, 140);
-  ui.print(d.condition.c_str());
+  ui.print(cond);
   ui.setFont(&fonts::Font2);
   ui.setTextColor(subCol, g_wxBg);
   char l2[24]; snprintf(l2, sizeof(l2), "H %.0f  L %.0f  RH %d%%",
                        d.temp_high, d.temp_low, d.humidity);
   ui.setCursor(14, 180);
   ui.print(l2);
-  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(subCol, g_wxBg); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
+  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(muteCol, g_wxBg); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);   // board TZ is PST8PDT (Vancouver); gmtime showed UTC
   char clk[16]; strftime(clk, sizeof(clk), "%H:%M", t);
@@ -224,9 +241,9 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   ui.setCursor(14, 232);
   ui.print(clk);
   ui.setFont(&fonts::Font0);
-  ui.setTextColor(subCol, g_wxBg);
+  ui.setTextColor(muteCol, g_wxBg);
   ui.setCursor(14, 254);
-  ui.print("PRESS: cycle scenes");
+  ui.print("PRESS: CYCLE SCENES");
 }
 
 void renderUiScene(int scene, uint16_t* buf, int w, int h) {

@@ -9,10 +9,12 @@ One small display that shows **your LLM usage live**:
   credits, and a per-model token split, pulled from `server.py` over the LAN.
 - **Scene 1 — Weather standby**: when the numbers stop moving for 90 s the board
   drops to a WeatherAPI.com clock/standby screen; the instant tokens resume it
-  jumps back to usage. Its background follows the actual conditions —
-  day/night × clear/cloudy/rain/snow (from the API's `is_day`) — easing over
-  ~1 s between palettes, with text colors adapting to the background's
-  luminance. The clock shows the board's local time (TZ `PST8PDT`).
+  jumps back to usage. Its background is a near-black canvas (Ferrari design
+  language, `DESIGN-ferrari.md` — `#181818`, never pure black) carrying a
+  subtle per-condition tint (day/night × clear/cloudy/rain/snow from the API's
+  `is_day`), eased over ~1 s; white display type, gray body, one scarce
+  Rosso-Corsa accent on the clock, which shows the board's local time
+  (TZ `PST8PDT`).
 - **Scenes 2…N — Generative art**: 8 effects (sand, plasma, rings, weave,
   Conway's life, cyclic CA, forest fire, Gray-Scott) at ~80 fps on the spare core.
 
