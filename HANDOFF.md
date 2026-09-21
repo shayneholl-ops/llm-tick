@@ -48,6 +48,7 @@ A Waveshare **ESP32-S3-LCD-1.47B** (ST7789 172×320, 8 MB PSRAM, 16 MB flash) tu
 - If the panel goes dark again: suspect **USB power delivery** (backlight draw) first.
 - `LGFX_Sprite` has no plain `fill(color)` — full fill is `fillRect(0,0,w,h,color)`.
 - Standby needs 90 s of **no data change**; a live feed that moves will keep the board on the usage scene.
-- Camera moves between runs — re-derive framing each time; the board sits in the upper camera area, USB end up.
+- Camera moves between runs — re-derive framing each time; the board sits in the upper camera area, USB end up, and **the board itself gets tilted/moved between captures** (happened repeatedly 2026-09-19 — never reuse a crop from an earlier frame without looking).
+- **Camera hue recipe**: crop the region → `format=rgb24 -f rawvideo` → average bytes; hue via `scale=64:64,format=yuv420p` raw (64×64 avoids rawvideo line-padding) and average the U/V planes — neutral is U=V=128, violet is U>128. pwsh gotchas hit on this path: the format operator is `-f` (not C-style printf), and a function named `Measure` collides with the `Measure-Object` cmdlet — name helpers `Measure-Crop` etc.
 - `sendcmd.ps1` args: PowerShell quoting eats arrays — one simple quoted string per command (`-Cmds "PRESS"`), or the board receives one mashed line and ignores it.
 - **crashloop.py owns COM4** — don't run sendcmd.ps1 while a loop is running (exclusive port).
