@@ -16,6 +16,17 @@ One small display that shows **your LLM usage live**:
   Rosso-Corsa accent on the clock, which shows the board's local time
   (TZ `PST8PDT`).
 
+- **Scene 2 — Cyberpunk ambient**: five procedural sub-scenes auto-cycling
+  inside the one scene — matrix rain (ASCII + half-width katakana), a procedural
+  night skyline with blinking windows and an aircraft, glitch storm, hex-dump
+  scroll, and neural-net pulses — ~9–14 s each with a short black hold between.
+  Drawn straight into the framebuffer at portrait 172×320, no SD card and no
+  extra libraries (`src/cyberpunk.cpp`). Concepts from Oxpr0x's
+  *Waveshare-ESP32-S3-Cyberpunk-Display* ("no SD" variant, a landscape
+  TFT_eSPI sketch); that repo declares no license, so the effects were
+  re-implemented for this pipeline rather than copied — only its public-domain
+  8×8 glyph table is vendored (`src/font8x8.h`).
+
 A `PRESS` line over USB-serial cycles the scenes. The unit does have a RESET and a BOOT button (see "Buttons" below), but on this build neither is a scene control — `PRESS` is. Onboard WS2812 shows the active scene colour.
 
 ## Merged from three open-source projects
@@ -23,6 +34,7 @@ A `PRESS` line over USB-serial cycles the scenes. The unit does have a RESET and
 | Piece | Source |
 |-------|--------|
 | `board.h`, dual-core render pipeline | [purzbeats/esp32-147b-genart](https://github.com/purzbeats/esp32-147b-genart) (its 8 genart effects were removed 2026-09-21) |
+| `cyberpunk` scene concepts + `font8x8.h` glyph data | [Oxpr0x/Waveshare-ESP32-S3-Cyberpunk-Display](https://github.com/Oxpr0x/Waveshare-ESP32-S3-Cyberpunk-Display) |
 | `server.py`, mDNS + JSON poll, bar UI, idle logic | [polo7261/esp32-claude-usage](https://github.com/polo7261/esp32-claude-usage) |
 | `weather_api.*` (WeatherAPI.com) | [icefox0801/ESP32-S3-LCD-1.47-Tiny-Board](https://github.com/icefox0801/ESP32-S3-LCD-1.47-Tiny-Board) |
 
@@ -149,6 +161,8 @@ llm-tick/            firmware (PlatformIO, Arduino)
     main.cpp         pipeline: dual-core render + scene dispatch + serial cmds
     tick.h           shared state (Usage struct, scene table)
     board.h          verified 1.47B pins + LGFX panel config
+    cyberpunk.cpp    cyberpunk ambient scene (5 procedural sub-scenes)
+    font8x8.h        public-domain 8x8 glyphs (ASCII + half-width katakana)
     ui.cpp           usage + weather scene rendering
     data.cpp         wifi, mDNS, JSON poll, idle->standby
     weather_api.*    WeatherAPI.com client

@@ -4,6 +4,7 @@
 #include <ESPmDNS.h>
 #include <Adafruit_NeoPixel.h>
 #include "board.h"
+#include "cyberpunk.h"
 #include "tick.h"
 
 LGFX lcd;
@@ -13,12 +14,12 @@ LGFX_Sprite* uiSpr = &spr0;   // UI scene draws through this (into the active bu
 uint16_t*    bufs[2]    = { nullptr, nullptr };
 Adafruit_NeoPixel led(1, PIN_RGB, NEO_GRB + NEO_KHZ800);
 
-// Scenes: 0 = usage, 1 = weather standby. (The 8 genart effect scenes were
-// removed 2026-09-21 at the user's request — usage/weather is the whole show.)
-// The serial PRESS line cycles the two with one counter.
+// Scenes: 0 = usage, 1 = weather standby, 2 = cyberpunk ambient (5 procedural
+// sub-scenes that auto-cycle inside it — see cyberpunk.cpp). The serial PRESS
+// line cycles them with one counter.
 volatile int   g_scene = 0;
-int            sceneCount() { return 2; }
-const char*    sceneName(int s) { return s == 0 ? "usage" : "weather"; }
+int            sceneCount() { return 3; }
+const char*    sceneName(int s) { return s == 0 ? "usage" : (s == 1 ? "weather" : "cyberpunk"); }
 
 volatile uint32_t g_renderUs = 0;
 
@@ -83,8 +84,10 @@ static void blTask(void*) {
 }
 
 void showLed(int s) {
-  uint32_t c = (s == 0) ? led.Color(0, 24, 24)   // usage: blue
-                        : led.Color(0, 20, 10);  // standby: soft green
+  uint32_t c;
+  if (s == 0)      c = led.Color(0, 24, 24);   // usage: blue
+  else if (s == 1) c = led.Color(0, 20, 10);   // standby: soft green
+  else             c = led.Color(0, 22, 16);   // cyberpunk: cyan
   led.setPixelColor(0, c);
   led.show();
 }
@@ -119,6 +122,8 @@ void renderTask(void*) {
           for (int x = 0; x < SCREEN_W; x++) row[x] = f;
         }
       }
+    } else if (s == 2) {
+      cyberFrame(bufs[idx], SCREEN_W, SCREEN_H);
     } else {
       renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     }
@@ -234,6 +239,7 @@ void setup() {
   led.begin();
 
   uiWbInit();          // white-balance the UI palette for this backlight (before frame 1)
+  cyberInit();         // cyberpunk scene palette + sub-scene state
 
   pinMode(PIN_BTN, INPUT_PULLUP);
 
@@ -265,7 +271,7 @@ void setup() {
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
   showLed(g_scene);
-  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather");
+  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather <-> cyberpunk");
 }
 
 void loop() {
