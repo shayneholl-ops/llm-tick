@@ -8,7 +8,7 @@ A Waveshare **ESP32-S3-LCD-1.47B** (ST7789 172×320, 8 MB PSRAM, 16 MB flash) tu
 ## Locations
 | Thing | Path / value |
 |---|---|
-| Canonical repo (master local @ `d507d07`; `93ce45b` last pushed — push not yet authorized) | `C:\Users\hxp-n\llm-tick-repo\` |
+| Canonical repo (master @ `aefc40e`, pushed 2026-09-19) | `C:\Users\hxp-n\llm-tick-repo\` |
 | Debug toolkit (diag project + tools + evidence) | `C:\Users\hxp-n\llm-tick-diag\` (wxprobe, sweep, bandwatch, matrix, beat, bandmap, crashloop, Waveshare demo, capture clips, logs) |
 | Stale pre-push sandbox copy (no .git, reference only) | `C:\Users\hxp-n\llm-tick\` (contains `ref-genart\`) |
 | Sample feed data | `C:\Users\hxp-n\llm-tick-test\` |
