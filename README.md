@@ -38,6 +38,18 @@ anything else and set `PIN_BL` in `src/board.h`. Drive it HIGH after
 `lcd.init()` — it defaults off via a 10K gate pulldown. Native USB-Serial JTAG:
 `VID 0x303A / PID 0x1001`.
 
+**Backlight color (per unit):** the unit this was built against has a
+**single cool-cast (blue/violet-rich) backlight LED** — GPIO48 drives it and
+GPIO46/47 do nothing in either polarity (an 8-state polarity matrix, the `BLX`
+serial command, proved there is no hidden white channel on this build).
+All-black content still glows periwinkle, and camera photos render the cast
+pink. The firmware compensates in software: `wb565()` in `src/tick.h`
+pre-shifts every UI/effect color toward green (G×14/16, B×10/16 —
+camera-calibrated with the `WB 7` split field, which locks the camera's
+white-balance on a white half of the screen so the dark half's true residual
+cast is measurable), so neutral content emits neutral through the cast. If
+your unit's backlight is white, set both gains to 16/16.
+
 **No physical buttons:** the 1.47B wiki lists a RESET and BOOT button, but the
 unit this was built against has neither — it behaves like the base 1.47. The
 GPIO0 poll in `main.cpp` (`PIN_BTN`) is inert (nothing ever pulls it low), and
