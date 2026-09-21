@@ -137,25 +137,71 @@ static int wxIconGlyph(int code) {
 }
 static const char* kIcons[] = { "!", "~", "*", ":", "f", "=", "+", "o" };
 
+// Dynamic standby background (2026-09-19): the color follows the ACTUAL
+// conditions — WeatherAPI day/night x clear/cloudy/rain/snow — and eases
+// toward the new target over ~1 s (UI scenes render every frame), so the
+// board drifts from day-sky to night-navy when the sun goes down. Rows 0-59
+// stay one uniform color, so the top-band flicker fix is unaffected.
+static int lum565(uint16_t c) {
+  int r = ((c >> 11) & 31) << 3 | ((c >> 11) & 31) >> 2;
+  int g = ((c >> 5) & 63) << 2 | ((c >> 5) & 63) >> 4;
+  int b = (c & 31) << 3 | (c & 31) >> 2;
+  return (r + g + b) / 3;
+}
+// Move a 0..N channel 1/10 of the way to its target (rounded, always at least
+// one step, never overshoots) so the approach never stalls and never jumps.
+static int near10(int a, int b) {
+  if (a == b) return a;
+  int d = b - a;
+  int step = (d > 0) ? (d + 9) / 10 : (d - 9) / 10;
+  return a + step;
+}
+// Close 1/10 of the remaining distance to `tgt` per call (once per UI frame)
+// and quantize back to 565 — ~1 s of smooth easing at the render rate.
+static uint16_t stepToward565(uint16_t cur, uint16_t tgt) {
+  int r0 = (cur >> 11) << 3 | (cur >> 8) & 7,  g0 = (cur >> 5) & 63, b0 = cur & 31;
+  int r1 = (tgt >> 11) << 3 | (tgt >> 8) & 7,  g1 = (tgt >> 5) & 63, b1 = tgt & 31;
+  int r = near10(r0, r1), g = near10(g0, g1), b = near10(b0, b1);
+  return (r << 11) | (g << 5) | b;
+}
+static uint16_t wxBgTarget(const WeatherData& d) {
+  if (!d.valid) return COL_BG;
+  int code = d.condition_code;
+  if (code < 1000)  return d.is_day ? 0x7E4C : 0x0044;  // clear / partly
+  if (code < 2000)  return d.is_day ? 0xC638 : 0x28C6;  // fog / cloudy
+  if (code < 4000)  return d.is_day ? 0x5B70 : 0x1085;  // rain / showers / thunder
+  return d.is_day ? 0xFFF8 : 0x3909;                   // snow
+}
+static uint16_t g_wxBg = COL_BG;   // current (possibly mid-transition) background
+
 static void renderWeather(uint16_t* buf, int w, int h) {
-  ui.fillScreen(COL_BG);
   const WeatherData& d = g_wxData;
+  uint16_t target = wxBgTarget(d);
+  if (g_wxBg != target) g_wxBg = stepToward565(g_wxBg, target);
+  ui.fillScreen(g_wxBg);
+  // Text colors track the background's luminance so the scene stays readable
+  // over both the bright day palette and the dark night palette.
+  bool bright = lum565(g_wxBg) > 128;
+  uint16_t numCol = bright ? 0x0841 : COL_BRIGHT;  // big temperature
+  uint16_t subCol = bright ? 0x30C6 : COL_TEXT;    // small text
+  uint16_t clkCol = bright ? 0x0040 : COL_BLUE;    // clock
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
-    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setTextColor(numCol, g_wxBg);
     ui.setCursor(14, 150);
     ui.print("standby");
+    ui.setTextColor(subCol, g_wxBg);
     ui.setCursor(14, 172);
     ui.print("weather: n/a");
     return;
   }
   char big[8]; snprintf(big, sizeof(big), "%.0f", d.temperature);
   ui.setFont(&fonts::Font8);
-  ui.setTextColor(COL_BRIGHT, COL_BG);
+  ui.setTextColor(numCol, g_wxBg);
   ui.setCursor(16, 72);
   ui.print(big);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(subCol, g_wxBg);
   ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 84);
   ui.print("C");
   ui.setFont(&fonts::Font2);
@@ -164,23 +210,23 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   ui.setCursor(14 + 16, 140);
   ui.print(d.condition.c_str());
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(subCol, g_wxBg);
   char l2[24]; snprintf(l2, sizeof(l2), "H %.0f  L %.0f  RH %d%%",
                        d.temp_high, d.temp_low, d.humidity);
   ui.setCursor(14, 180);
   ui.print(l2);
-  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
+  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(subCol, g_wxBg); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
   time_t now = time(nullptr);
-  struct tm* t = gmtime(&now);
+  struct tm* t = localtime(&now);   // board TZ is PST8PDT (Vancouver); gmtime showed UTC
   char clk[16]; strftime(clk, sizeof(clk), "%H:%M", t);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BLUE, COL_BG);
+  ui.setTextColor(clkCol, g_wxBg);
   ui.setCursor(14, 232);
   ui.print(clk);
   ui.setFont(&fonts::Font0);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(subCol, g_wxBg);
   ui.setCursor(14, 254);
-  ui.print("BOOT: cycle scenes");
+  ui.print("PRESS: cycle scenes");
 }
 
 void renderUiScene(int scene, uint16_t* buf, int w, int h) {

@@ -15,7 +15,9 @@
 // lights the backlight ONLY with GPIO48 driven HIGH (46 and 47 do nothing).
 // This unit behaves like the base 1.47 — trust the hardware over the PDF.
 #define PIN_BL   48   // LCD backlight, active HIGH (per on-unit blink test)
-#define PIN_BTN  0    // BOOT button, active LOW (use INPUT_PULLUP)
+#define PIN_BTN  0    // wiki 1.47B puts a BOOT button here — THIS UNIT HAS NONE
+                      // (on-unit check 2026-09-19): the poll is inert (nothing
+                      // ever pulls it low); scene cycling is the serial PRESS line
 #define PIN_RGB  38   // onboard WS2812 RGB LED
 
 // --- Screen -------------------------------------------------------------------

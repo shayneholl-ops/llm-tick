@@ -14,6 +14,7 @@ struct WeatherData {
   float temp_low, temp_high;
   int humidity;       // %
   int aqi;            // US EPA index, 0 = n/a
+  bool is_day;        // WeatherAPI current.is_day (drives the dynamic background)
   bool valid;
 };
 

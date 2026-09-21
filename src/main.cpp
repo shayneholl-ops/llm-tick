@@ -15,7 +15,8 @@ uint16_t*    bufs[2]    = { nullptr, nullptr };
 Adafruit_NeoPixel led(1, PIN_RGB, NEO_GRB + NEO_KHZ800);
 
 // A "scene" is 0 = usage, 1 = weather standby, 2..N-1 = genart effects.
-// BOOT cycles through all of them with one counter.
+// The serial PRESS line cycles through all of them with one counter
+// (this unit has no physical button).
 volatile int   g_scene = 0;
 int            sceneCount() { return 2 + NUM_EFFECTS; }
 const char*    sceneName(int s) { return s < 2 ? (s == 0 ? "usage" : "weather") : EFFECTS[s - 2].name; }
@@ -229,7 +230,7 @@ void setup() {
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
   showLed(g_scene);
-  Serial.println("[tick] running — BOOT cycles usage -> weather -> effects");
+  Serial.println("[tick] running — PRESS (serial) cycles usage -> weather -> effects");
 }
 
 void loop() {

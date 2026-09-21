@@ -24,6 +24,7 @@ bool WeatherAPI::fetch() {
   _d.condition_code = doc["current"]["condition"]["code"] | 0;
   String cond       = doc["current"]["condition"]["text"].as<String>();
   _d.condition      = (cond.length() > 18) ? cond.substring(0, 18) : cond;
+  _d.is_day         = (doc["current"]["is_day"] | 0) != 0;
 
   float hi = doc["forecast"]["forecastday"][0]["day"]["maxtemp_c"] | NAN;
   float lo = doc["forecast"]["forecastday"][0]["day"]["mintemp_c"] | NAN;

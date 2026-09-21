@@ -9,11 +9,14 @@ One small display that shows **your LLM usage live**:
   credits, and a per-model token split, pulled from `server.py` over the LAN.
 - **Scene 1 — Weather standby**: when the numbers stop moving for 90 s the board
   drops to a WeatherAPI.com clock/standby screen; the instant tokens resume it
-  jumps back to usage.
+  jumps back to usage. Its background follows the actual conditions —
+  day/night × clear/cloudy/rain/snow (from the API's `is_day`) — easing over
+  ~1 s between palettes, with text colors adapting to the background's
+  luminance. The clock shows the board's local time (TZ `PST8PDT`).
 - **Scenes 2…N — Generative art**: 8 effects (sand, plasma, rings, weave,
   Conway's life, cyclic CA, forest fire, Gray-Scott) at ~80 fps on the spare core.
 
-**BOOT** button cycles every scene. Onboard WS2812 shows the active scene colour.
+A `PRESS` line over USB-serial cycles every scene — **this unit has no physical button** (the 1.47B wiki's BOOT/RESET do not exist on this build; the GPIO0 poll is inert). Onboard WS2812 shows the active scene colour.
 
 ## Merged from three open-source projects
 
@@ -32,6 +35,12 @@ backlight only on **GPIO48** — verified on hardware with a blink matrix (46 an
 anything else and set `PIN_BL` in `src/board.h`. Drive it HIGH after
 `lcd.init()` — it defaults off via a 10K gate pulldown. Native USB-Serial JTAG:
 `VID 0x303A / PID 0x1001`.
+
+**No physical buttons:** the 1.47B wiki lists a RESET and BOOT button, but the
+unit this was built against has neither — it behaves like the base 1.47. The
+GPIO0 poll in `main.cpp` (`PIN_BTN`) is inert (nothing ever pulls it low), and
+flashing needs no button-hold (onboard auto-download circuit). The `PRESS`
+serial line is the only scene control.
 
 **Panel geometry:** the 172-wide glass is centered in the ST7789's 240-wide RAM
 (`offset_x 34`), not at origin as some references claim — on the unit this was
@@ -75,7 +84,7 @@ bursty load. With the radio disabled the same loop ran 15 min clean; normal
 60-s polling runs clean too, which is why real use never hit it. The ARDUINO
 build's driver is prebuilt (its buffer pools can't be retuned per project),
 so the shipped mitigation is behavioral: on-switch refreshes are gated to
-once per 30 s (`data.cpp`), capping even a mashed BOOT button at ~2 fetches/
+once per 30 s (`data.cpp`), capping even a mashed `PRESS` line at ~2 fetches/
 min — the old 6-s hammer now runs clean. If wifi oddities ever return,
 power-cycling the router is the complementary cure.
 
@@ -85,7 +94,7 @@ power-cycling the router is the complementary cure.
 cd llm-tick
 cp secrets.h.example secrets.h     # fill in WiFi + server + weather key
 pio run                            # build
-pio run -t upload --upload-port COMx   # flash (hold BOOT to enter download mode)
+pio run -t upload --upload-port COMx   # flash (auto-download circuit; no button to hold)
 ```
 
 ## Server (the data source)
@@ -120,7 +129,7 @@ python -m pytest -q server_test.py     # or: python server_test.py
 ```
 llm-tick/            firmware (PlatformIO, Arduino)
   src/
-    main.cpp         pipeline: dual-core render + scene dispatch + button
+    main.cpp         pipeline: dual-core render + scene dispatch + serial cmds
     tick.h           shared state (Usage struct, scene table)
     board.h          verified 1.47B pins + LGFX panel config
     effects.h/.cpp   8 genart effects + palettes (from genart)
