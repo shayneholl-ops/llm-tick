@@ -29,7 +29,6 @@ struct Usage {
 };
 extern Usage g_u;
 
-extern volatile float g_ax, g_ay, g_az;
 extern volatile uint32_t g_lastSceneChange;   // set by checkButton / auto-switch
 
 // ── Backlight white balance ───────────────────────────────────────────────────
@@ -48,7 +47,7 @@ static inline uint16_t wb565(uint16_t c) {
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
-// ── Provided by llm-tick.ino ─────────────────────────────────────────────────
+// ── Provided by main.cpp ─────────────────────────────────────────────────────
 extern LGFX lcd;
 extern LGFX_Sprite* sprites[2];
 extern LGFX_Sprite* uiSpr;     // UI draws into the active sprite buffer

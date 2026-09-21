@@ -4,7 +4,6 @@
 #include <ESPmDNS.h>
 #include <Adafruit_NeoPixel.h>
 #include "board.h"
-#include "effects.h"
 #include "tick.h"
 
 LGFX lcd;
@@ -14,14 +13,13 @@ LGFX_Sprite* uiSpr = &spr0;   // UI scene draws through this (into the active bu
 uint16_t*    bufs[2]    = { nullptr, nullptr };
 Adafruit_NeoPixel led(1, PIN_RGB, NEO_GRB + NEO_KHZ800);
 
-// A "scene" is 0 = usage, 1 = weather standby, 2..N-1 = genart effects.
-// The serial PRESS line cycles through all of them with one counter
-// (this unit has no physical button).
+// Scenes: 0 = usage, 1 = weather standby. (The 8 genart effect scenes were
+// removed 2026-09-21 at the user's request — usage/weather is the whole show.)
+// The serial PRESS line cycles the two with one counter.
 volatile int   g_scene = 0;
-int            sceneCount() { return 2 + NUM_EFFECTS; }
-const char*    sceneName(int s) { return s < 2 ? (s == 0 ? "usage" : "weather") : EFFECTS[s - 2].name; }
+int            sceneCount() { return 2; }
+const char*    sceneName(int s) { return s == 0 ? "usage" : "weather"; }
 
-volatile float g_ax = 0, g_ay = 0, g_az = 1;
 volatile uint32_t g_renderUs = 0;
 
 QueueHandle_t freeQ, readyQ;   // carry buffer indices (0/1) between the two cores
@@ -85,10 +83,8 @@ static void blTask(void*) {
 }
 
 void showLed(int s) {
-  uint32_t c;
-  if (s == 0) c = led.Color(0, 24, 24);        // usage: blue
-  else if (s == 1) c = led.Color(0, 20, 10);   // standby: soft green
-  else c = led.Color(EFFECTS[s - 2].ledR, EFFECTS[s - 2].ledG, EFFECTS[s - 2].ledB);
+  uint32_t c = (s == 0) ? led.Color(0, 24, 24)   // usage: blue
+                        : led.Color(0, 20, 10);  // standby: soft green
   led.setPixelColor(0, c);
   led.show();
 }
@@ -97,7 +93,6 @@ void showLed(int s) {
 // it to the consumer. Effects write byte-swapped RGB565 directly; UI scenes draw
 // through lcd into the same buffer (fonts are panel-bound on this core).
 void renderTask(void*) {
-  uint32_t frame = 0;
   for (;;) {
     int idx;
     xQueueReceive(freeQ, &idx, portMAX_DELAY);
@@ -124,22 +119,18 @@ void renderTask(void*) {
           for (int x = 0; x < SCREEN_W; x++) row[x] = f;
         }
       }
-    } else if (s < 2) {
-      renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     } else {
-      Inputs in = { frame, g_ax, g_ay, g_az };
-      EFFECTS[s - 2].fn(bufs[idx], SCREEN_W, SCREEN_H, in, PAL565[EFFECTS[s - 2].palette]);
+      renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     }
     // Top-band flicker guard (2026-09-19): with offset_rotation 2, buffer row 0
     // lands on the ST7789's last RAM row (319), which refreshes with a per-scan
     // luminance quirk (visible as a slow hazy band at the glass top edge).
     // Mirror row 0 from row 1 so the quirk row's content is identical to its
-    // neighbor -> its ~5% modulation is imperceptible. (UI scenes already have
-    // background there; this makes the effects consistent too.)
+    // neighbor -> its ~5% modulation is imperceptible. (Both scenes already have
+    // pure background there.)
     // TEST-C: guard memcpy temporarily disabled (crash-bisect 2026-09-19).
     // memcpy(bufs[idx], bufs[idx] + SCREEN_W, SCREEN_W * sizeof(uint16_t));
     g_renderUs = micros() - t;
-    frame++;
     xQueueSend(readyQ, &idx, portMAX_DELAY);
   }
 }
@@ -243,13 +234,6 @@ void setup() {
   led.begin();
 
   uiWbInit();          // white-balance the UI palette for this backlight (before frame 1)
-  buildTables();
-  effectsSeed(esp_random());
-  for (int p = 0; p < NUM_PALETTES; p++)
-    for (int i = 0; i < 256; i++) {
-      uint16_t c = wb565(lcd.color565(PALETTES[p][i][0], PALETTES[p][i][1], PALETTES[p][i][2]));
-      PAL565[p][i] = (uint16_t)((c >> 8) | (c << 8));   // byte-swap for sprite layout
-    }
 
   pinMode(PIN_BTN, INPUT_PULLUP);
 
@@ -281,7 +265,7 @@ void setup() {
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
   showLed(g_scene);
-  Serial.println("[tick] running — PRESS (serial) cycles usage -> weather -> effects");
+  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather");
 }
 
 void loop() {

@@ -15,16 +15,14 @@ One small display that shows **your LLM usage live**:
   `is_day`), eased over ~1 s; white display type, gray body, one scarce
   Rosso-Corsa accent on the clock, which shows the board's local time
   (TZ `PST8PDT`).
-- **Scenes 2…N — Generative art**: 8 effects (sand, plasma, rings, weave,
-  Conway's life, cyclic CA, forest fire, Gray-Scott) at ~80 fps on the spare core.
 
-A `PRESS` line over USB-serial cycles every scene — **this unit has no physical button** (the 1.47B wiki's BOOT/RESET do not exist on this build; the GPIO0 poll is inert). Onboard WS2812 shows the active scene colour.
+A `PRESS` line over USB-serial cycles the scenes. The unit does have a RESET and a BOOT button (see "Buttons" below), but on this build neither is a scene control — `PRESS` is. Onboard WS2812 shows the active scene colour.
 
 ## Merged from three open-source projects
 
 | Piece | Source |
 |-------|--------|
-| `board.h`, `effects.*`, dual-core pipeline | [purzbeats/esp32-147b-genart](https://github.com/purzbeats/esp32-147b-genart) |
+| `board.h`, dual-core render pipeline | [purzbeats/esp32-147b-genart](https://github.com/purzbeats/esp32-147b-genart) (its 8 genart effects were removed 2026-09-21) |
 | `server.py`, mDNS + JSON poll, bar UI, idle logic | [polo7261/esp32-claude-usage](https://github.com/polo7261/esp32-claude-usage) |
 | `weather_api.*` (WeatherAPI.com) | [icefox0801/ESP32-S3-LCD-1.47-Tiny-Board](https://github.com/icefox0801/ESP32-S3-LCD-1.47-Tiny-Board) |
 
@@ -50,11 +48,15 @@ white-balance on a white half of the screen so the dark half's true residual
 cast is measurable), so neutral content emits neutral through the cast. If
 your unit's backlight is white, set both gains to 16/16.
 
-**No physical buttons:** the 1.47B wiki lists a RESET and BOOT button, but the
-unit this was built against has neither — it behaves like the base 1.47. The
-GPIO0 poll in `main.cpp` (`PIN_BTN`) is inert (nothing ever pulls it low), and
-flashing needs no button-hold (onboard auto-download circuit). The `PRESS`
-serial line is the only scene control.
+**Buttons:** the unit does have a RESET and a BOOT button (the 1.47B wiki is
+right; the "no button" note in earlier versions of this doc was wrong), but on
+this build neither is a scene control: a RESET press does a **full reboot** —
+the ROM reports `rst:0x15 (USB_UART_CHIP_RESET)`, i.e. it is wired through the
+USB-UART chip's reset, not EN — and just returns the display to the usage
+scene; no BOOT press ever produced a scene change (90 s of serial watching),
+so the GPIO0 poll in `main.cpp` (`PIN_BTN`) stays inert. Flashing needs no
+button-hold (onboard auto-download circuit). The `PRESS` serial line is the
+scene control.
 
 **Panel geometry:** the 172-wide glass is centered in the ST7789's 240-wide RAM
 (`offset_x 34`), not at origin as some references claim — on the unit this was
@@ -82,9 +84,10 @@ it, 25 fps aliases most of it away).
 **Fix:** the UI scenes keep **rows 0–59 pure background** (`ui.cpp` — title
 at y 64, divider at 94, bars at 104/176/248, weather number at 72), so the
 meander modulates only a uniform field — no edges in the band means the
-~5 % luminance wobble is imperceptible. Effects intentionally keep full-bleed
-art (a shimmer inside artwork is acceptable; the complaint was the text).
-If it is ever still visible, the remaining cures are physical: a shroud over
+~5 % luminance wobble is imperceptible. If it is ever still visible (the user
+can still see a slow breathing on the weather background, measured 4.4 Y
+peak-to-peak in the band at 4 fps while the desk control reads 0.25), the
+remaining cures are physical: a shroud over
 the top ~7 mm, or rotating the module 180° (then remove `offset_rotation 2`)
 to park the band at the bottom edge.
 
@@ -146,7 +149,6 @@ llm-tick/            firmware (PlatformIO, Arduino)
     main.cpp         pipeline: dual-core render + scene dispatch + serial cmds
     tick.h           shared state (Usage struct, scene table)
     board.h          verified 1.47B pins + LGFX panel config
-    effects.h/.cpp   8 genart effects + palettes (from genart)
     ui.cpp           usage + weather scene rendering
     data.cpp         wifi, mDNS, JSON poll, idle->standby
     weather_api.*    WeatherAPI.com client

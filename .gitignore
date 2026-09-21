@@ -3,3 +3,11 @@ secrets.h
 .pio/
 data/
 *.pyc
+
+# camera captures / calibration dumps from on-unit sessions — keep locally only
+*.jpg
+*.rgb
+blx-results.txt
+wb-results.txt
+blx-*.txt
+wb-*.txt
