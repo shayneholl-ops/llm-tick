@@ -145,6 +145,31 @@ BIND_HOST=192.168.1.50 python server.py
 The board finds the server by **mDNS name** (`SERVER_HOST` in `secrets.h`, no
 reflash when the LAN renumbers); the static IP is a fallback.
 
+### Feeding it from a local llama-server
+
+`llama-server` writes no usage log, but started with `--metrics` it exposes
+cumulative counters (`llamacpp:prompt_tokens_total`,
+`llamacpp:tokens_predicted_total`). `llama_usage_poller.py` samples them every
+30 s, diffs them, and appends rows in exactly the format `server.py` reads
+(`{"ts":…,"model":…,"input_tokens":…,"output_tokens":…}`):
+
+```bash
+# on any machine that can reach the llama-server
+MODEL_NAME=Qwen3-27B LLAMA_BASE=http://192.168.1.94:12345 \
+  OUT_PATH=/path/to/usage.jsonl python llama_usage_poller.py
+
+# then point the server at that log
+LOG_PATH=/path/to/usage.jsonl BIND_HOST=192.168.1.50 python server.py
+```
+
+Counters reset when llama-server restarts; the poller treats a decrease as a new
+baseline, so no negative rows — but usage during the restart gap, and any usage
+while the poller is stopped, is not recorded. Note the bar semantics `server.py`
+uses: the **session** bar is 5 h tokens against a 2 M budget, and the **weekly**
+bar is the busiest model's *share* of the last 24 h (with a single model that
+reads 100 % whenever there is any usage) — both are one-line tweaks in
+`server.py`.
+
 ## Self-check
 
 `server.py` has one runnable check:
@@ -169,5 +194,6 @@ llm-tick/            firmware (PlatformIO, Arduino)
   platformio.ini     build config (native USB, PSRAM, huge_app)
   secrets.h.example  copy to src/secrets.h (gitignored)
 server.py            LAN usage server (source-agnostic)
+llama_usage_poller.py  llama-server /metrics -> usage log (feeds server.py)
 server_test.py       one check for the server
 ```
