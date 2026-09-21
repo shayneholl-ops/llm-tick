@@ -202,6 +202,111 @@ static uint16_t wxBgTarget(const WeatherData& d) {
 }
 static uint16_t g_wxBg = COL_BG;   // current (possibly mid-transition) background
 
+// ── Weather condition icon — procedural, animated ───────────────────────────
+// No image assets: every icon is drawn from primitives, so it costs no flash and
+// animates for free (this scene is fully re-rendered every UI frame). Kept
+// monochrome per the Ferrari set — white ink for the primary shape, gray body
+// for puffs, muted for details/halo/streaks; the Rosso Corsa accent stays on the
+// clock alone. Everything lives inside the icon box (plus a few px of falling
+// rain/snow) so display rows 0-59 stay pure background (top-band meander guard).
+enum WxFam { WX_SUN, WX_MOON, WX_PARTLY_D, WX_PARTLY_N, WX_CLOUD, WX_RAIN, WX_SNOW, WX_STORM, WX_FOG };
+
+static WxFam wxFamily(int code, bool day) {
+  if (code == 1000) return day ? WX_SUN : WX_MOON;                       // clear
+  if (code == 1003) return day ? WX_PARTLY_D : WX_PARTLY_N;              // partly cloudy
+  if (code == 1030 || code == 1135 || code == 1147) return WX_FOG;       // mist / fog
+  if (code == 1087 || (code >= 1273 && code <= 1282)) return WX_STORM;   // thunder
+  if (code == 1066 || code == 1114 || code == 1117 ||
+      (code >= 1204 && code <= 1237) || (code >= 1249 && code <= 1264)) return WX_SNOW;
+  if (code == 1063 || code == 1069 || code == 1072 || code == 1150 || code == 1153 ||
+      (code >= 1180 && code <= 1201) || (code >= 1240 && code <= 1246)) return WX_RAIN;
+  return WX_CLOUD;
+}
+
+// One cloud cluster (three puffs over a rounded base) with a small sideways
+// drift so it breathes rather than sitting dead still.
+static void wxCloud(int x, int y, int s, uint16_t col, int drift) {
+  int bw = s * 3 / 4, base = y + s / 2;
+  ui.fillCircle(x + drift + bw / 5,     base,          s / 6, col);
+  ui.fillCircle(x + drift + bw / 2,     base - s / 9,  s / 5, col);
+  ui.fillCircle(x + drift + bw * 4 / 5, base,          s / 7, col);
+  ui.fillRoundRect(x + drift + bw / 6,  base, bw * 2 / 3, s / 4, s / 12, col);
+}
+
+static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
+                       uint16_t body, uint16_t mute, uint16_t bg) {
+  const uint32_t t = millis();
+  const int cx = x + s / 2, cy = y + s / 2;
+  switch (fam) {
+    case WX_SUN:                                       // rays breathe in and out
+      for (int i = 0; i < 8; i++) {
+        float a = i * (PI / 4.0f);
+        int r0 = s / 5, r1 = s / 5 + 2 + (int)(2.5f * sinf(t / 420.0f + i * 1.7f));
+        ui.drawLine(cx + (int)(cosf(a) * r0), cy + (int)(sinf(a) * r0),
+                    cx + (int)(cosf(a) * r1), cy + (int)(sinf(a) * r1), ink);
+      }
+      ui.fillCircle(cx, cy, s / 6, ink);
+      break;
+    case WX_MOON:                                      // slow halo pulse + crescent
+      ui.drawCircle(cx, cy, s / 3 + 1 + (int)(1.5f * sinf(t / 950.0f)), mute);
+      ui.fillCircle(cx, cy, s / 5, ink);
+      ui.fillCircle(cx + s / 7, cy - s / 9, s / 6, bg);
+      break;
+    case WX_PARTLY_D:                                  // sun behind a drifting cloud
+      for (int i = 0; i < 6; i++) {
+        float a = i * (PI / 3.0f);
+        int r0 = s / 7, r1 = s / 7 + 2 + (int)(2.0f * sinf(t / 420.0f + i));
+        ui.drawLine(x + s / 3 + (int)(cosf(a) * r0), y + s / 3 + (int)(sinf(a) * r0),
+                    x + s / 3 + (int)(cosf(a) * r1), y + s / 3 + (int)(sinf(a) * r1), ink);
+      }
+      ui.fillCircle(x + s / 3, y + s / 3, s / 8, ink);
+      wxCloud(x, y + s / 5, s, body, (int)(1.5f * sinf(t / 700.0f)));
+      break;
+    case WX_PARTLY_N:                                  // moon behind a drifting cloud
+      ui.fillCircle(x + s / 3, y + s / 3, s / 7, ink);
+      ui.fillCircle(x + s / 3 + s / 12, y + s / 4, s / 9, bg);
+      wxCloud(x, y + s / 5, s, body, (int)(1.5f * sinf(t / 700.0f)));
+      break;
+    case WX_CLOUD:
+      wxCloud(x, y + s / 6, s, body, (int)(1.5f * sinf(t / 760.0f)));
+      break;
+    case WX_RAIN:                                      // streaks fall under the cloud
+      wxCloud(x, y, s, body, (int)(1.2f * sinf(t / 800.0f)));
+      for (int i = 0; i < 3; i++) {
+        int px = x + s / 4 + i * (s / 4);
+        int py = y + s * 3 / 5 + (int)((t / 55 + i * 11) % (s / 3));
+        ui.drawLine(px, py, px - 1, py + 4, mute);
+      }
+      break;
+    case WX_SNOW:                                      // flakes drift and sway
+      wxCloud(x, y, s, body, (int)(1.2f * sinf(t / 800.0f)));
+      for (int i = 0; i < 5; i++) {
+        int py = y + s * 3 / 5 + (int)((t / 85 + i * 13) % (s / 3));
+        int px = x + s / 5 + i * (s / 6) + (int)(2.0f * sinf(t / 340.0f + i));
+        ui.fillCircle(px, py, 1, mute);
+      }
+      break;
+    case WX_STORM: {                                   // bolt + a local flash only
+      bool flash = (t % 3600) < 110;
+      wxCloud(x, y, s, flash ? ink : body, (int)(1.2f * sinf(t / 800.0f)));
+      int bx = x + s / 2;
+      ui.fillTriangle(bx, y + s * 3 / 5, bx - s / 7, y + s * 3 / 4, bx + s / 14, y + s * 3 / 4,
+                      flash ? ink : body);
+      ui.fillTriangle(bx + s / 20, y + s * 3 / 5 + s / 8, bx - s / 10, y + s * 4 / 5,
+                      bx + s / 6, y + s * 4 / 5, flash ? ink : body);
+      break;
+    }
+    case WX_FOG:
+    default:                                           // bands slide sideways
+      for (int i = 0; i < 4; i++) {
+        int wlen = s * 3 / 5 + (int)((s / 5) * sinf(t / 900.0f + i * 1.3f));
+        int fx = x + s / 6 + (int)(3.0f * sinf(t / 1100.0f + i));
+        ui.fillRoundRect(fx, y + s / 4 + i * (s / 7), wlen, 2, 1, mute);
+      }
+      break;
+  }
+}
+
 static void renderWeather(uint16_t* buf, int w, int h) {
   const WeatherData& d = g_wxData;
   uint16_t target = wxBgTarget(d);
@@ -235,6 +340,15 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   ui.setTextColor(subCol, g_wxBg);
   ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 84);
   ui.print("C");
+  // Animated condition icon in the free block right of the temperature; shrink
+  // it if the reading is wide (e.g. "-10") so the two never collide.
+  {
+    int tempEnd = 16 + ui.textWidth(big, &fonts::Font8) + 4 + ui.textWidth("C", &fonts::Font4);
+    int isz = 48, ix = 116;
+    if (tempEnd + 6 > ix) { isz = 40; ix = w - 8 - isz; }
+    if (tempEnd + 4 > ix) { isz = 32; ix = w - 6 - isz; }
+    drawWxIcon(ix, 62, isz, wxFamily(d.condition_code, d.is_day), numCol, subCol, muteCol, g_wxBg);
+  }
   // Caption style: uppercase (the bitmap fonts have no tracking).
   char cond[19];
   int cn = d.condition.length(); if (cn > 18) cn = 18;
