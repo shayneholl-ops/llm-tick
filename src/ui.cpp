@@ -200,7 +200,38 @@ static uint16_t wxBgTarget(const WeatherData& d) {
   if (code < 4000)  return d.is_day ? wb565(0x18EC) : wb565(0x1083);  // rain: cool blue
   return d.is_day ? wb565(0x2125) : wb565(0x18E5);        // snow: cool, lighter
 }
-static uint16_t g_wxBg = COL_BG;   // current (possibly mid-transition) background
+// Blend `a` toward `b` by f1024 (0..1024) per 565 channel — the gradient mixer.
+static uint16_t mix565(uint16_t a, uint16_t b, int f1024) {
+  int ar = (a >> 11) << 3 | (a >> 8) & 7,  ag = (a >> 5) & 63, ab = a & 31;
+  int br = (b >> 11) << 3 | (b >> 8) & 7,  bg = (b >> 5) & 63, bb = b & 31;
+  // NOTE: the shift applies to the DELTA only — `+` binds tighter than `>>`,
+  // so the unparenthesised form shifted the whole sum and wrapped channels
+  // into bright garbage (2026-09-21 white-screen bug).
+  int r  = ar + (((br - ar) * f1024) >> 10);
+  int g  = ag + (((bg - ag) * f1024) >> 10);
+  int bl = ab + (((bb - ab) * f1024) >> 10);
+  return (r << 11) | (g << 5) | bl;
+}
+// Scale a 565 color toward black by f1000 (0..1000): derives the darker bottom
+// stop of the weather gradient from the tuned top stop (WB-safe — both are
+// multiplicative, so the backlight balance is preserved).
+static uint16_t scale565(uint16_t c, int f1000) {
+  int r = ((c >> 11) << 3 | (c >> 8) & 7) * f1000 / 1000;
+  int g = ((c >> 5) & 63) * f1000 / 1000;
+  int b = (c & 31) * f1000 / 1000;
+  return (r << 11) | (g << 5) | b;
+}
+// The weather background is a two-stop vertical gradient (2026-09-21):
+// wxBgTarget() is the TOP color — per-condition x day/night (standby: base
+// canvas) — and rows 0-59 stay that one uniform color (top-band meander
+// guard); below it the field deepens to a static ~55%-luminance bottom stop.
+// Both stops ease 1/10 per frame only while a condition changes (~1 s).
+// The field itself is never re-animated per frame: this panel shows rolling
+// refresh banding on any full-field change (the same family as the top-band
+// meander), so motion lives in the animated condition icon alone. All targets
+// stay far below the lum-128 flip, so type is always the light set.
+static uint16_t g_wxTop = COL_BG;   // current top stop (possibly mid-transition)
+static uint16_t g_wxBot = COL_BG;   // current bottom stop (possibly mid-transition)
 
 // ── Weather condition icon — procedural, animated ───────────────────────────
 // No image assets: every icon is drawn from primitives, so it costs no flash and
@@ -309,35 +340,57 @@ static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
 
 static void renderWeather(uint16_t* buf, int w, int h) {
   const WeatherData& d = g_wxData;
-  uint16_t target = wxBgTarget(d);
-  if (g_wxBg != target) g_wxBg = stepToward565(g_wxBg, target);
-  ui.fillScreen(g_wxBg);
+  uint16_t topTgt = wxBgTarget(d);
+  // The bottom stop is STATIC per condition. A per-frame "breath" was tried and
+  // rejected on-glass: rewriting the lower 260 rows every frame made the panel's
+  // rolling per-scan refresh banding visible across the whole field (2026-09-21
+  // camera capture — striped lower 2/3). Motion stays in the animated icon only.
+  uint16_t botTgt = scale565(topTgt, 550);
+  if (g_wxTop != topTgt) g_wxTop = stepToward565(g_wxTop, topTgt);
+  if (g_wxBot != botTgt) g_wxBot = stepToward565(g_wxBot, botTgt);
+  // Rows 0-59: one uniform color (meander guard). Below: per-row gradient,
+  // written straight into the framebuffer (same pattern as the WB fields).
+  ui.fillRect(0, 0, w, 60, g_wxTop);
+  {
+    uint16_t* row = buf + (size_t)60 * w;
+    const int rows = h - 60;
+    for (int y = 60; y < h; y++, row += w) {
+      uint16_t c = mix565(g_wxTop, g_wxBot, (y - 60) * 1024 / rows);
+      for (int x = 0; x < w; x++) row[x] = c;
+    }
+  }
   // Type per the Ferrari set: white ink, gray body, muted captions, and the
   // one scarce Rosso accent on the clock (the "race position" role). The
   // luminance flip is kept as a safety net only — every palette entry is
-  // dark, so the light set is what actually renders.
-  bool bright = lum565(g_wxBg) > 128;
+  // dark, so the light set is what actually renders. Polarity is judged on
+  // the gradient's midpoint (the text zone).
+  bool bright = lum565(mix565(g_wxTop, g_wxBot, 512)) > 128;
   uint16_t numCol  = bright ? wb565(0x0841) : COL_INK;    // big temperature
   uint16_t subCol  = bright ? wb565(0x30C6) : COL_BODY;   // small text
   uint16_t muteCol = bright ? wb565(0x30E6) : COL_MUTED;  // captions / footer
   uint16_t clkCol  = bright ? wb565(0x0040) : COL_ROSSO;  // the one accent
+  // Background color at a given row — text clips to the local gradient color.
+  auto bgAt = [&](int y) -> uint16_t {
+    int f = (y < 60) ? 0 : ((y - 60) * 1024 / (h - 60));
+    return mix565(g_wxTop, g_wxBot, f);
+  };
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
-    ui.setTextColor(numCol, g_wxBg);
+    ui.setTextColor(numCol, bgAt(150));
     ui.setCursor(14, 150);
     ui.print("STANDBY");
-    ui.setTextColor(muteCol, g_wxBg);
+    ui.setTextColor(muteCol, bgAt(172));
     ui.setCursor(14, 172);
     ui.print("WEATHER: N/A");
     return;
   }
   char big[8]; snprintf(big, sizeof(big), "%.0f", d.temperature);
   ui.setFont(&fonts::Font8);
-  ui.setTextColor(numCol, g_wxBg);
+  ui.setTextColor(numCol, bgAt(72));
   ui.setCursor(16, 72);
   ui.print(big);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(subCol, g_wxBg);
+  ui.setTextColor(subCol, bgAt(84));
   ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 84);
   ui.print("C");
   // Animated condition icon in the free block right of the temperature; shrink
@@ -347,7 +400,7 @@ static void renderWeather(uint16_t* buf, int w, int h) {
     int isz = 48, ix = 116;
     if (tempEnd + 6 > ix) { isz = 40; ix = w - 8 - isz; }
     if (tempEnd + 4 > ix) { isz = 32; ix = w - 6 - isz; }
-    drawWxIcon(ix, 62, isz, wxFamily(d.condition_code, d.is_day), numCol, subCol, muteCol, g_wxBg);
+    drawWxIcon(ix, 62, isz, wxFamily(d.condition_code, d.is_day), numCol, subCol, muteCol, bgAt(62 + isz / 2));
   }
   // Caption style: uppercase (the bitmap fonts have no tracking).
   char cond[19];
@@ -355,27 +408,27 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   for (int i = 0; i < cn; i++) cond[i] = (char)toupper((unsigned char)d.condition[i]);
   cond[cn] = 0;
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(subCol, g_wxBg);
+  ui.setTextColor(subCol, bgAt(140));
   ui.setCursor(14, 140);
   ui.print(kIcons[wxIconGlyph(d.condition_code)]);
   ui.setCursor(14 + 16, 140);
   ui.print(cond);
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(subCol, g_wxBg);
+  ui.setTextColor(subCol, bgAt(180));
   char l2[24]; snprintf(l2, sizeof(l2), "H %.0f  L %.0f  RH %d%%",
                        d.temp_high, d.temp_low, d.humidity);
   ui.setCursor(14, 180);
   ui.print(l2);
-  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(muteCol, g_wxBg); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
+  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(muteCol, bgAt(200)); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);   // board TZ is PST8PDT (Vancouver); gmtime showed UTC
   char clk[16]; strftime(clk, sizeof(clk), "%H:%M", t);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(clkCol, g_wxBg);
+  ui.setTextColor(clkCol, bgAt(232));
   ui.setCursor(14, 232);
   ui.print(clk);
   ui.setFont(&fonts::Font0);
-  ui.setTextColor(muteCol, g_wxBg);
+  ui.setTextColor(muteCol, bgAt(254));
   ui.setCursor(14, 254);
   ui.print("PRESS: CYCLE SCENES");
 }
