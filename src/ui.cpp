@@ -187,10 +187,15 @@ static int near10(int a, int b) {
 // Close 1/10 of the remaining distance to `tgt` per call (once per UI frame)
 // and quantize back to 565 — ~1 s of smooth easing at the render rate.
 static uint16_t stepToward565(uint16_t cur, uint16_t tgt) {
-  int r0 = (cur >> 11) << 3 | (cur >> 8) & 7,  g0 = (cur >> 5) & 63, b0 = cur & 31;
-  int r1 = (tgt >> 11) << 3 | (tgt >> 8) & 7,  g1 = (tgt >> 5) & 63, b1 = tgt & 31;
+  // Channels stay in NATIVE 5/6/5 space. Expanding them to 8-bit and packing
+  // the result back with <<11/<<5 (this function's original form, and mix565/
+  // scale565 below) stuffs an 8-bit value into a 5-bit field: every eased
+  // colour came out ~8x too bright and hue-shifted, which is what painted the
+  // weather field magenta/red instead of the tuned dark tint (2026-09-21).
+  int r0 = (cur >> 11) & 31, g0 = (cur >> 5) & 63, b0 = cur & 31;
+  int r1 = (tgt >> 11) & 31, g1 = (tgt >> 5) & 63, b1 = tgt & 31;
   int r = near10(r0, r1), g = near10(g0, g1), b = near10(b0, b1);
-  return (r << 11) | (g << 5) | b;
+  return (uint16_t)((r << 11) | (g << 5) | b);
 }
 static uint16_t wxBgTarget(const WeatherData& d) {
   if (!d.valid) return wb565(0x18C3);                  // #181818 base canvas
@@ -202,34 +207,35 @@ static uint16_t wxBgTarget(const WeatherData& d) {
 }
 // Blend `a` toward `b` by f1024 (0..1024) per 565 channel — the gradient mixer.
 static uint16_t mix565(uint16_t a, uint16_t b, int f1024) {
-  int ar = (a >> 11) << 3 | (a >> 8) & 7,  ag = (a >> 5) & 63, ab = a & 31;
-  int br = (b >> 11) << 3 | (b >> 8) & 7,  bg = (b >> 5) & 63, bb = b & 31;
-  // NOTE: the shift applies to the DELTA only — `+` binds tighter than `>>`,
-  // so the unparenthesised form shifted the whole sum and wrapped channels
-  // into bright garbage (2026-09-21 white-screen bug).
+  int ar = (a >> 11) & 31, ag = (a >> 5) & 63, ab = a & 31;
+  int br = (b >> 11) & 31, bg = (b >> 5) & 63, bb = b & 31;
+  // Native 5/6/5 space (see stepToward565), and the shift applies to the DELTA
+  // only — `+` binds tighter than `>>`, so the unparenthesised form shifted the
+  // whole sum and wrapped channels into bright garbage (2026-09-21 white-screen
+  // bug). Both mistakes together produced the "rainbow field" capture.
   int r  = ar + (((br - ar) * f1024) >> 10);
   int g  = ag + (((bg - ag) * f1024) >> 10);
   int bl = ab + (((bb - ab) * f1024) >> 10);
-  return (r << 11) | (g << 5) | bl;
+  return (uint16_t)((r << 11) | (g << 5) | bl);
 }
 // Scale a 565 color toward black by f1000 (0..1000): derives the darker bottom
 // stop of the weather gradient from the tuned top stop (WB-safe — both are
 // multiplicative, so the backlight balance is preserved).
 static uint16_t scale565(uint16_t c, int f1000) {
-  int r = ((c >> 11) << 3 | (c >> 8) & 7) * f1000 / 1000;
+  int r = ((c >> 11) & 31) * f1000 / 1000;
   int g = ((c >> 5) & 63) * f1000 / 1000;
   int b = (c & 31) * f1000 / 1000;
-  return (r << 11) | (g << 5) | b;
+  return (uint16_t)((r << 11) | (g << 5) | b);
 }
-// The weather background is a two-stop vertical gradient (2026-09-21):
-// wxBgTarget() is the TOP color — per-condition x day/night (standby: base
-// canvas) — and rows 0-59 stay that one uniform color (top-band meander
-// guard); below it the field deepens to a static ~55%-luminance bottom stop.
-// Both stops ease 1/10 per frame only while a condition changes (~1 s).
-// The field itself is never re-animated per frame: this panel shows rolling
-// refresh banding on any full-field change (the same family as the top-band
-// meander), so motion lives in the animated condition icon alone. All targets
-// stay far below the lum-128 flip, so type is always the light set.
+// The weather background is a full-height two-stop vertical gradient
+// (2026-09-21): wxBgTarget() is the TOP color — per-condition x day/night
+// (standby: base canvas) — deepening to a static ~55%-luminance bottom stop.
+// It runs edge to edge with no uniform plateau: an earlier 60-row flat top
+// (the old meander guard) put a hard colour band across the glass top sixth,
+// because the *plateau edge* was the artifact, not the ramp.
+// Both stops ease 1/10 per frame only while a condition changes (~1 s); the
+// field itself is never re-animated per frame. All targets stay far below the
+// lum-128 flip, so type is always the light set.
 static uint16_t g_wxTop = COL_BG;   // current top stop (possibly mid-transition)
 static uint16_t g_wxBot = COL_BG;   // current bottom stop (possibly mid-transition)
 
@@ -341,21 +347,29 @@ static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
 static void renderWeather(uint16_t* buf, int w, int h) {
   const WeatherData& d = g_wxData;
   uint16_t topTgt = wxBgTarget(d);
-  // The bottom stop is STATIC per condition. A per-frame "breath" was tried and
-  // rejected on-glass: rewriting the lower 260 rows every frame made the panel's
-  // rolling per-scan refresh banding visible across the whole field (2026-09-21
-  // camera capture — striped lower 2/3). Motion stays in the animated icon only.
+  // The bottom stop is STATIC per condition (calm canvas). The earlier per-frame
+  // ~40 s "breath" was pulled on a MISDIAGNOSIS — that capture's stripes were the
+  // 8-bit-into-5-bit packing bug in stepToward565/mix565/scale565, not the motion.
+  // Static is kept because the design reads as a still canvas and per-frame
+  // full-field writes buy nothing.
   uint16_t botTgt = scale565(topTgt, 550);
   if (g_wxTop != topTgt) g_wxTop = stepToward565(g_wxTop, topTgt);
   if (g_wxBot != botTgt) g_wxBot = stepToward565(g_wxBot, botTgt);
-  // Rows 0-59: one uniform color (meander guard). Below: per-row gradient,
-  // written straight into the framebuffer (same pattern as the WB fields).
-  ui.fillRect(0, 0, w, 60, g_wxTop);
+  // Full-height background: rows 0..h-1, one direct byte-swapped path.
+  // The earlier shape kept rows 0-59 as a uniform plateau (the old meander
+  // guard) and started the ramp at 60; on-glass that read as a hard colour band
+  // across the top sixth — the plateau edge was the artifact, not the ramp (a
+  // flat control field drifts smoothly across the same rows). A smooth ramp has
+  // no edge for the top-band quirk to catch, so the guard is not needed here.
   {
-    uint16_t* row = buf + (size_t)60 * w;
-    const int rows = h - 60;
-    for (int y = 60; y < h; y++, row += w) {
-      uint16_t c = mix565(g_wxTop, g_wxBot, (y - 60) * 1024 / rows);
+    uint16_t* row = buf;
+    for (int y = 0; y < h; y++, row += w) {
+      uint16_t c = mix565(g_wxTop, g_wxBot, y * 1024 / (h - 1));
+      // Raw writes into the sprite need the byte swap (LGFX covers fillRect and
+      // text, raw writes do not — same convention as the WB fields). Verified
+      // on-glass with alternating 40-row representation bands: swapped rows
+      // matched the LGFX-filled reference, unswapped rows came out magenta.
+      c = (uint16_t)((c >> 8) | (c << 8));
       for (int x = 0; x < w; x++) row[x] = c;
     }
   }
@@ -371,8 +385,7 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   uint16_t clkCol  = bright ? wb565(0x0040) : COL_ROSSO;  // the one accent
   // Background color at a given row — text clips to the local gradient color.
   auto bgAt = [&](int y) -> uint16_t {
-    int f = (y < 60) ? 0 : ((y - 60) * 1024 / (h - 60));
-    return mix565(g_wxTop, g_wxBot, f);
+    return mix565(g_wxTop, g_wxBot, y * 1024 / (h - 1));
   };
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
