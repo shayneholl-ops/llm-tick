@@ -53,8 +53,12 @@ static uint16_t barColor(int pct, uint16_t accent, bool warn) {
 }
 
 // label + right-aligned % + rounded track/fill + small footer
+// `value`, when given, replaces the percentage as the big right-aligned number
+// (2026-09-21, user request: the usage page shows actual token counts instead of
+// percentages). The bar still visualises the proportion, so the budget context
+// is not lost — only the headline number changes.
 static void drawBar(int y, const char* label, int pct, uint16_t accent,
-                    const char* footer, bool warn = true) {
+                    const char* footer, bool warn = true, const char* value = nullptr) {
   int barX = 14, barW = 144, barH = 12, w = SCREEN_W;
   ui.setFont(&fonts::Font2);
   ui.setTextColor(COL_TEXT, COL_BG);
@@ -62,7 +66,15 @@ static void drawBar(int y, const char* label, int pct, uint16_t accent,
   ui.print(label);
   ui.setFont(&fonts::Font4);
   ui.setTextColor(COL_BRIGHT, COL_BG);
-  char p[8]; snprintf(p, sizeof(p), "%d%%", pct);
+  char p[12];
+  if (value && *value) snprintf(p, sizeof(p), "%s", value);
+  else snprintf(p, sizeof(p), "%d%%", pct);
+  // Auto-fit: a token count can be wider than a percentage ("12.3M" vs "64%"),
+  // and the label sits immediately left of this number — drop to Font2 when the
+  // wide font would collide with it (2026-09-21).
+  int labelEnd = barX + ui.textWidth(label, &fonts::Font2);
+  int avail = barX + barW + 2 - labelEnd - 6;
+  if ((int)ui.textWidth(p, &fonts::Font4) > avail) ui.setFont(&fonts::Font2);
   ui.setCursor(barX + barW + 2 - ui.textWidth(p, &fonts::Font4), y - 2);
   ui.print(p);
   int barY = y + 21;
@@ -126,9 +138,12 @@ static void renderUsage(uint16_t* buf, int w, int h) {
     snprintf(footer, sizeof(footer), g_u.sessionResetMin >= 60
              ? "resets in %dh%02dm" : "resets in %dm",
              g_u.sessionResetMin / 60, g_u.sessionResetMin % 60);
-    drawBar(slotY[slot++], "Session (5h)", g_u.sessionPct, COL_BLUE, footer);
+    // Headline number = real token count (server sends tok_active / tok_week as
+    // "225K" / "1.2M"); the bar keeps the percentage as its proportion. Falls
+    // back to the percentage if the token source did not answer.
+    drawBar(slotY[slot++], "Session (5h)", g_u.sessionPct, COL_BLUE, footer, true, g_u.ccOk ? g_u.tokActive : nullptr);
     snprintf(footer, sizeof(footer), "resets %s", g_u.weeklyReset);
-    drawBar(slotY[slot++], "Weekly (7d)", g_u.weeklyPct, COL_CYAN, footer);
+    drawBar(slotY[slot++], "Weekly (7d)", g_u.weeklyPct, COL_CYAN, footer, true, g_u.ccOk ? g_u.tokWeek : nullptr);
     if (g_u.spendPct >= 0 && slot < BARS_PER_PAGE) {
       snprintf(footer, sizeof(footer), "%.2f / %.2f %s",
                g_u.spendUsed, g_u.spendLimit, g_u.spendCur);
