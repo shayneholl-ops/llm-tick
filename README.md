@@ -167,6 +167,33 @@ MODEL_NAME=Qwen3-27B LLAMA_BASE=http://192.168.1.94:12345 \
 LOG_PATH=/path/to/usage.jsonl BIND_HOST=192.168.1.50 python server.py
 ```
 
+### Showing the GPU's live load and temperature
+
+The usage page has a GPU row (load %, edge temp, and hotspot when the card
+reports it). `server.py` fills it by sampling `rocm-smi` **on the model host
+over SSH** — most such hosts expose no HTTP telemetry, and llama-server's own
+`/metrics` carries no GPU counters. Configure it with:
+
+```bash
+# default: admin-a8@192.168.1.94, card0
+GPU_SSH=admin-a8@192.168.1.94 GPU_CARD=card0 python server.py
+
+# switch the row off entirely
+GPU_DISABLE=1 python server.py
+```
+
+Authentication is key-based (`BatchMode=yes`), so nothing prompts and no
+password is stored; install a key on the host first
+(`ssh-copy-id admin-a8@192.168.1.94`). Sampling is cached (5 s when healthy,
+30 s after a failure) and every error is swallowed, so an unreachable host
+degrades that one row to `--` instead of breaking the usage payload. Pick
+`GPU_CARD` from the keys of `rocm-smi --showuse --showtemp --json` (`card0`,
+`card1`, …) — on a box with an iGPU, the discrete card is normally `card0`.
+
+Because the row is a live gauge, the board polls every **15 s while the usage
+page is displayed** (60 s elsewhere, 10 s after a failure), which is the
+cadence the wifi RX path has been stable at.
+
 Counters reset when llama-server restarts; the poller treats a decrease as a new
 baseline, so no negative rows — but usage during the restart gap, and any usage
 while the poller is stopped, is not recorded. Note the bar semantics `server.py`

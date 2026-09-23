@@ -22,6 +22,11 @@ struct Usage {
   float burnHr = 0;
   int  spendPct = -1; float spendUsed = 0, spendLimit = 0;
   char spendCur[4] = "";
+  // GPU telemetry from the model host (server.py samples it over SSH). -1 = no
+  // reading, so the UI can show "--" rather than a fake 0.
+  bool gpuOk = false;
+  int  gpuLoadPct = -1;
+  float gpuTempC = -1, gpuTempJunctionC = -1;
   unsigned long fetchedAgo = 0;     // s since last successful fetch
   unsigned long dataChangedMs = 0;  // last time the numbers actually moved
   unsigned long lastFetchMs = 0;

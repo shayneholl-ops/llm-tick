@@ -117,6 +117,11 @@ static void parseUsage(const String& payload) {
     u.spendLimit = doc["spend_limit"] | 0.0f;
     copyStr(u.spendCur, 4, doc["spend_cur"].as<String>());
   }
+  // GPU telemetry (server.py -> SSH -> rocm-smi). Absent or failed = gpuOk false.
+  u.gpuOk = doc["gpu_ok"] | false;
+  u.gpuLoadPct = doc["gpu_load_pct"] | -1;
+  u.gpuTempC = doc["gpu_temp_c"] | -1.0f;
+  u.gpuTempJunctionC = doc["gpu_temp_junction_c"] | -1.0f;
 
   // Did anything actually move? That's the real "is the LLM busy" signal.
   bool changed = (u.sessionPct != g_u.sessionPct) || (u.weeklyPct != g_u.weeklyPct)
@@ -181,7 +186,15 @@ void tickLogic() {
   // promptly, but at most once per 30 s: hammering BOOT in a tight loop must
   // not burst the wifi RX path (2026-09-19: ~10 fetches/min crash-looped the
   // driver's ebuf pool on EVERY build, the pristine 2026-09-18 one included).
+  // The usage page polls faster (15s) because its GPU row is a *live* gauge —
+  // a 60s-old load figure is worthless. Gated to scene 0, page 0 (where that
+  // row is drawn) so no extra wifi traffic while idle on weather or on the
+  // slower pages, and still well under the 10/min that hurt the RX pool.
+  const unsigned long LIVE_INTERVAL = 15000;
   unsigned long interval = (g_u.ok && !g_u.stale) ? FETCH_INTERVAL : 10000;
+  if (g_scene == 0 && g_u.curPage == 0 && g_u.ok && !g_u.stale
+      && interval > LIVE_INTERVAL)
+    interval = LIVE_INTERVAL;
   if (now - g_u.lastFetchMs > interval ||
       ((now - g_lastSceneChange) < 500 && (now - g_u.lastFetchMs) > 30000))
     fetchUsage();

@@ -20,6 +20,7 @@ Usage:
 import json
 import os
 import re
+import subprocess
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -28,7 +29,9 @@ BIND_HOST = os.environ.get("BIND_HOST", "127.0.0.1")
 ALLOW_PUBLIC_BIND = os.environ.get("ALLOW_PUBLIC_BIND") == "1"
 LOG_PATH = os.path.expanduser(os.environ.get("LOG_PATH", "~/.llama.cpp/usage.jsonl"))
 CCUSAGE_BIN = os.environ.get("CCUSAGE_BIN", "")
-REFRESH = 15  # the board polls every 60s; this is just the server-side re-read cadence
+# Server-side re-read cadence. The board polls every 15 s while the usage page is
+# displayed (60 s otherwise), so this stays under that to keep the GPU row live.
+REFRESH = 10
 
 # The display is a tiny status light: it should say "the LLM is busy right now",
 # not "what happened this week". So the bars are driven by the *last* request
@@ -36,6 +39,63 @@ REFRESH = 15  # the board polls every 60s; this is just the server-side re-read 
 # this model's share of recent tokens. Adjust the window below to your taste.
 ACTIVE_WINDOW_S = 5 * 3600
 RECENT_WINDOW_S = 24 * 3600
+
+# ── GPU telemetry (optional, for the GPU row on the usage page) ───────────────
+# The model runs on a *different* box from this one, and that box exposes no HTTP
+# telemetry (only llama-server's :12345, whose metrics carry no GPU counters), so
+# we ask over SSH. rocm-smi --json is machine-readable and a sample costs ~0.35 s.
+#   GPU_SSH      ssh target            (default admin-a8@192.168.1.94)
+#   GPU_CARD     rocm-smi card key     (default card0 = the RX 7900 XTX; card1 is
+#                the 680M iGPU and never serves the model)
+#   GPU_DISABLE=1                     turns sampling off entirely
+# Auth is key-based (BatchMode), so nothing here prompts or stores a password.
+GPU_SSH = os.environ.get("GPU_SSH", "admin-a8@192.168.1.94")
+GPU_CARD = os.environ.get("GPU_CARD", "card0")
+GPU_ENABLED = os.environ.get("GPU_DISABLE") != "1"
+GPU_REFRESH = 5          # s between good samples (board polls every 15 s)
+GPU_ERROR_REFRESH = 30   # s to wait after a failure — no SSH retry storm
+GPU_TIMEOUT = 6          # s hard cap on one sample
+
+_gpu_cache = {"data": None, "ts": 0}
+
+
+def gpu_stats():
+    """Live load/temperature of the model host's GPU.
+
+    Never raises: any failure yields gpu_ok=False and the row shows "--", so a
+    dead link degrades the display instead of breaking the usage payload.
+    """
+    now = time.time()
+    cached = _gpu_cache["data"]
+    if cached is not None:
+        ttl = GPU_REFRESH if cached.get("gpu_ok") else GPU_ERROR_REFRESH
+        if (now - _gpu_cache["ts"]) < ttl:
+            return cached
+    if not GPU_ENABLED:
+        return {"gpu_ok": False, "gpu_load_pct": -1, "gpu_temp_c": -1.0,
+                "gpu_temp_junction_c": -1.0}
+    try:
+        raw = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
+             "-o", "StrictHostKeyChecking=accept-new", GPU_SSH,
+             "rocm-smi --showuse --showtemp --json 2>/dev/null"],
+            capture_output=True, text=True, timeout=GPU_TIMEOUT).stdout
+        card = json.loads(raw).get(GPU_CARD, {})
+        load = card.get("GPU use (%)")
+        edge = card.get("Temperature (Sensor edge) (C)")
+        junc = card.get("Temperature (Sensor junction) (C)")
+        out = {
+            "gpu_ok": load is not None,
+            "gpu_load_pct": int(float(load)) if load is not None else -1,
+            "gpu_temp_c": float(edge) if edge is not None else -1.0,
+            "gpu_temp_junction_c": float(junc) if junc is not None else -1.0,
+        }
+    except Exception:
+        out = {"gpu_ok": False, "gpu_load_pct": -1, "gpu_temp_c": -1.0,
+               "gpu_temp_junction_c": -1.0}
+    _gpu_cache["data"] = out
+    _gpu_cache["ts"] = now
+    return out
 
 _cache = {"data": None, "ts": 0}
 
@@ -227,6 +287,7 @@ def get_usage():
         "spend_enabled": False, "spend_pct": -1, "spend_used": 0.0,
         "spend_limit": 0.0, "spend_cur": "",
     }
+    out.update(gpu_stats())
     _cache["data"] = out
     _cache["ts"] = now
     return out

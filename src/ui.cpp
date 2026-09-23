@@ -90,6 +90,47 @@ static void drawBar(int y, const char* label, int pct, uint16_t accent,
   }
 }
 
+// The GPU row: live load as the big right-aligned number (same grammar as the
+// budget rows, so the page reads consistently) over a load bar, with the model
+// host's temperatures underneath. Data comes from server.py, which samples
+// rocm-smi on that host over SSH — this board cannot reach the GPU itself.
+// Temperature turns amber at 80C and red at 90C; edge is the headline figure and
+// hotspot (junction) rides along when the card reports it.
+static void drawGpuRow(int y) {
+  int barX = 14, barW = 144, barH = 12;
+  const bool ok = g_u.gpuOk && g_u.gpuLoadPct >= 0;
+  ui.setFont(&fonts::Font2);
+  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setCursor(barX, y);
+  ui.print("GPU");
+  char v[16];
+  if (ok) snprintf(v, sizeof(v), "%d%%", g_u.gpuLoadPct);
+  else snprintf(v, sizeof(v), "--");
+  ui.setFont(&fonts::Font4);
+  ui.setTextColor(COL_BRIGHT, COL_BG);
+  int avail = barX + barW + 2 - (barX + ui.textWidth("GPU", &fonts::Font2)) - 6;
+  if ((int)ui.textWidth(v, &fonts::Font4) > avail) ui.setFont(&fonts::Font2);
+  ui.setCursor(barX + barW + 2 - ui.textWidth(v, &fonts::Font4), y - 2);
+  ui.print(v);
+  int barY = y + 21;
+  ui.fillRoundRect(barX, barY, barW, barH, 3, COL_BAR_BG);
+  if (ok && g_u.gpuLoadPct > 0) {
+    int load = g_u.gpuLoadPct > 100 ? 100 : g_u.gpuLoadPct;
+    ui.fillRoundRect(barX, barY, (barW * load) / 100, barH, 3, COL_GREEN);
+  }
+  ui.setFont(&fonts::Font0);
+  ui.setCursor(barX, barY + 17);
+  if (!ok) {
+    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.print("gpu unavailable");
+    return;
+  }
+  float t = g_u.gpuTempC;
+  ui.setTextColor(t >= 90 ? COL_RED : (t >= 80 ? COL_YELLOW : COL_TEXT), COL_BG);
+  if (g_u.gpuTempJunctionC > 0) ui.printf("%.0fC  hs %.0fC", t, g_u.gpuTempJunctionC);
+  else ui.printf("%.0fC", t);
+}
+
 static void statusRow(int dotY, const char* state, bool ok) {
   ui.fillCircle(24, dotY, 4, ok ? COL_GREEN : COL_RED);
   ui.setFont(&fonts::Font0);
@@ -134,21 +175,31 @@ static void renderUsage(uint16_t* buf, int w, int h) {
   char footer[32];
 
   if (g_u.curPage == 0) {
-    int slot = 0;
+    // Row pitch is normally 68 px (the airy layout this page has always had).
+    // Credits is dead in this deployment (server.py hardcodes spend_pct=-1) but
+    // still supported: if it ever appears the page needs four rows, so tighten
+    // to 48 px — four rows at the airy pitch would run into the status row.
+    const bool hasCredits = (g_u.spendPct >= 0);
+    const int pitch = hasCredits ? 48 : 68;
+    int y = 104;
     snprintf(footer, sizeof(footer), g_u.sessionResetMin >= 60
              ? "resets in %dh%02dm" : "resets in %dm",
              g_u.sessionResetMin / 60, g_u.sessionResetMin % 60);
     // Headline number = real token count (server sends tok_active / tok_week as
     // "225K" / "1.2M"); the bar keeps the percentage as its proportion. Falls
     // back to the percentage if the token source did not answer.
-    drawBar(slotY[slot++], "Session (5h)", g_u.sessionPct, COL_BLUE, footer, true, g_u.ccOk ? g_u.tokActive : nullptr);
+    drawBar(y, "Session (5h)", g_u.sessionPct, COL_BLUE, footer, true, g_u.ccOk ? g_u.tokActive : nullptr);
+    y += pitch;
     snprintf(footer, sizeof(footer), "resets %s", g_u.weeklyReset);
-    drawBar(slotY[slot++], "Weekly (7d)", g_u.weeklyPct, COL_CYAN, footer, true, g_u.ccOk ? g_u.tokWeek : nullptr);
-    if (g_u.spendPct >= 0 && slot < BARS_PER_PAGE) {
+    drawBar(y, "Weekly (7d)", g_u.weeklyPct, COL_CYAN, footer, true, g_u.ccOk ? g_u.tokWeek : nullptr);
+    y += pitch;
+    if (hasCredits) {
       snprintf(footer, sizeof(footer), "%.2f / %.2f %s",
                g_u.spendUsed, g_u.spendLimit, g_u.spendCur);
-      drawBar(slotY[slot++], "Credits", g_u.spendPct, COL_ORANGE, footer);
+      drawBar(y, "Credits", g_u.spendPct, COL_ORANGE, footer);
+      y += pitch;
     }
+    drawGpuRow(y);
   } else if (g_u.curPage == 1 && g_u.ccOk && g_u.tokModelCount > 0) {
     ui.setFont(&fonts::Font0);
     ui.setTextColor(COL_TEXT, COL_BG);
