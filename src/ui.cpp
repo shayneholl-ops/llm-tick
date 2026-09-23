@@ -13,9 +13,8 @@
 // UI palette — design values (D_*) and runtime white-balanced copies (COL_*).
 // wb565() (tick.h) compensates this unit's cool-cast backlight: the near-
 // neutral colors below pre-shift toward green so they render neutral on the
-// glass. Ferrari language for the weather scene (DESIGN-ferrari.md):
-// near-black canvas (#181818 — "never pure black"), white ink, gray body,
-// one scarce Rosso Corsa accent.
+// glass. Weather scene palette: near-black canvas (#181818 — "never pure
+// black"), white ink, gray body, one scarce red accent on the clock.
 static const uint16_t D_BG     = 0x1082, D_BAR_BG = 0x2945, D_TEXT   = 0xC618;
 static const uint16_t D_BRIGHT = 0xFFFF, D_BLUE   = 0x3B7F, D_GREEN  = 0x2E8B;
 static const uint16_t D_YELLOW = 0xFE60, D_RED    = 0xF800, D_CYAN   = 0x07FA;
@@ -23,7 +22,7 @@ static const uint16_t D_PURPLE = 0xA95F, D_ORANGE = 0xFCC0, D_MINT   = 0x2FEB;
 static const uint16_t D_INK    = 0xFFFF;  // #ffffff display ink
 static const uint16_t D_BODY   = 0x94B2;  // #969696 body gray
 static const uint16_t D_MUTED  = 0x632C;  // #666666 muted
-static const uint16_t D_ROSSO  = 0xD943;  // #da291c Rosso Corsa (scarce)
+static const uint16_t D_ROSSO  = 0xD943;  // #da291c red (scarce)
 static uint16_t COL_BG     = D_BG, COL_BAR_BG = D_BAR_BG, COL_TEXT   = D_TEXT;
 static uint16_t COL_BRIGHT = D_BRIGHT, COL_BLUE = D_BLUE, COL_GREEN = D_GREEN;
 static uint16_t COL_YELLOW = D_YELLOW, COL_RED = D_RED, COL_CYAN = D_CYAN;
@@ -230,12 +229,12 @@ static int wxIconGlyph(int code) {
 }
 static const char* kIcons[] = { "!", "~", "*", ":", "f", "=", "+", "o" };
 
-// Weather standby background (Ferrari design language, DESIGN-ferrari.md):
-// the canvas stays near-black (#181818 — "never pure black") and only takes
-// a subtle per-condition tint — day/night x clear/cloudy/rain/snow — so the
-// scene still breathes with the real weather without becoming a light
-// source. All targets sit far below the lum-128 flip, so type is always the
-// light set. Rows 0-59 stay one uniform color: top-band flicker fix intact.
+// Weather standby background: the canvas stays near-black (#181818 — "never
+// pure black") and only takes a subtle per-condition tint — day/night x
+// clear/cloudy/rain/snow — so the scene still breathes with the real weather
+// without becoming a light source. All targets sit far below the lum-128
+// flip, so type is always the light set. The ramp runs full-height — the old
+// 60-row uniform plateau turned out to be the visible band, so it's gone.
 static int lum565(uint16_t c) {
   int r = ((c >> 11) & 31) << 3 | ((c >> 11) & 31) >> 2;
   int g = ((c >> 5) & 63) << 2 | ((c >> 5) & 63) >> 4;
@@ -308,9 +307,9 @@ static uint16_t g_wxBot = COL_BG;   // current bottom stop (possibly mid-transit
 // ── Weather condition icon — procedural, animated ───────────────────────────
 // No image assets: every icon is drawn from primitives, so it costs no flash and
 // animates for free (this scene is fully re-rendered every UI frame). Kept
-// monochrome per the Ferrari set — white ink for the primary shape, gray body
-// for puffs, muted for details/halo/streaks; the Rosso Corsa accent stays on the
-// clock alone. Everything lives inside the icon box (plus a few px of falling
+// monochrome — white ink for the primary shape, gray body for puffs, muted for
+// details/halo/streaks; the red accent stays on the clock alone. Everything
+// lives inside the icon box (plus a few px of falling
 // rain/snow) so display rows 0-59 stay pure background (top-band meander guard).
 enum WxFam { WX_SUN, WX_MOON, WX_PARTLY_D, WX_PARTLY_N, WX_CLOUD, WX_RAIN, WX_SNOW, WX_STORM, WX_FOG };
 
@@ -439,8 +438,8 @@ static void renderWeather(uint16_t* buf, int w, int h) {
       for (int x = 0; x < w; x++) row[x] = c;
     }
   }
-  // Type per the Ferrari set: white ink, gray body, muted captions, and the
-  // one scarce Rosso accent on the clock (the "race position" role). The
+  // Type: white ink, gray body, muted captions, and the one scarce red accent
+  // on the clock. The
   // luminance flip is kept as a safety net only — every palette entry is
   // dark, so the light set is what actually renders. Polarity is judged on
   // the gradient's midpoint (the text zone).

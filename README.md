@@ -9,17 +9,17 @@ One small display that shows **your LLM usage live**:
   credits, and a per-model token split, pulled from `server.py` over the LAN.
 - **Scene 1 — Weather standby**: when the numbers stop moving for 90 s the board
   drops to a WeatherAPI.com clock/standby screen; the instant tokens resume it
-  jumps back to usage. Its background is a near-black canvas (Ferrari design
-  language, `DESIGN-ferrari.md` — `#181818`, never pure black) carrying a
-  subtle per-condition tint (day/night × clear/cloudy/rain/snow from the API's
-  `is_day`), eased over ~1 s; white display type, gray body, one scarce
-  Rosso-Corsa accent on the clock, which shows the board's local time
+  jumps back to usage. Its background is a near-black canvas
+  (`#181818`, never pure black) carrying a subtle per-condition tint
+  (day/night × clear/cloudy/rain/snow from the API's `is_day`), eased over
+  ~1 s; white display type, gray body, one scarce red accent on the clock,
+  which shows the board's local time
   (TZ `PST8PDT`). Beside the temperature sits a **procedural animated condition
   icon** (sun / moon / cloud / rain / snow / fog / storm) — drawn from
   primitives, so there are no image assets and no LVGL: sun rays breathe, clouds
   drift, rain streaks and snow flakes fall, the moon's halo pulses, a storm
   flashes locally inside the icon. Monochrome (white ink / gray puffs / muted
-  detail) per the Ferrari set, and it shrinks when the reading is wide.
+  detail), and it shrinks when the reading is wide.
 
 - **Scene 2 — Cyberpunk ambient**: five procedural sub-scenes auto-cycling
   inside the one scene — matrix rain (ASCII + half-width katakana), a procedural
