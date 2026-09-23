@@ -11,3 +11,7 @@ blx-results.txt
 wb-results.txt
 blx-*.txt
 wb-*.txt
+
+# poller runtime log (llama_usage_poller.py appends to it beside the repo)
+poller.log
+usage.jsonl
