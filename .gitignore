@@ -15,3 +15,7 @@ wb-*.txt
 # poller runtime log (llama_usage_poller.py appends to it beside the repo)
 poller.log
 usage.jsonl
+
+# DSH client preset bundles the GUI drops into the working dir (not project files)
+*.dshpreset
+.preset-dl/
