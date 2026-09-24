@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<meta content="mobile_tab" name="shell-type"/>
+<title>ESP32-S3 Weather: Neo-Ukiyo-e Vector Backgrounds</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;family=Noto+Serif+JP:wght@400;600;700;900&amp;family=Sora:wght@400;600;700;800&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          "on-background": "#e8e0f0",
+          "on-tertiary": "#1a1000",
+          "secondary-fixed-dim": "#00e6b8",
+          "secondary-fixed": "#c0fff4",
+          "background": "#0a0a12",
+          "on-secondary-container": "#c0fff4",
+          "on-surface": "#e8e0f0",
+          "on-secondary-fixed": "#001a1a",
+          "on-primary": "#1a0010",
+          "secondary": "#00ffcc",
+          "primary": "#ff2d78",
+          "surface-container-highest": "#28283e",
+          "on-tertiary-fixed": "#1a1000",
+          "error-container": "#3d0f0f",
+          "surface-dim": "#0f0f1a",
+          "on-tertiary-container": "#fff0c0",
+          "tertiary-fixed": "#fff0c0",
+          "on-primary-fixed-variant": "#8c0038",
+          "surface-container-high": "#1e1e30",
+          "inverse-surface": "#e8e0f0",
+          "outline": "#5a5068",
+          "on-primary-fixed": "#3d0020",
+          "secondary-container": "#004d3d",
+          "on-primary-container": "#ffe0ec",
+          "tertiary-container": "#665200",
+          "outline-variant": "#302840",
+          "surface-variant": "#1e1e30",
+          "tertiary-fixed-dim": "#ffe04a",
+          "tertiary": "#ffe04a",
+          "primary-fixed-dim": "#ff80aa",
+          "error": "#ff4444",
+          "on-error": "#1a0000",
+          "surface-tint": "#ff2d78",
+          "primary-fixed": "#ffe0ec",
+          "on-secondary": "#001a1a",
+          "inverse-primary": "#8c0038",
+          "surface-container-lowest": "#0a0a12",
+          "surface-container-low": "#111118",
+          "inverse-on-surface": "#0a0a12",
+          "on-tertiary-fixed-variant": "#665200",
+          "on-secondary-fixed-variant": "#004d4d",
+          "surface-container": "#141422",
+          "on-error-container": "#ffa0a0",
+          "surface-bright": "#1a1a2e",
+          "surface": "#0b0c14",
+          "primary-container": "#b3004e",
+          "on-surface-variant": "#a098b0",
+          "vermilion": "#eb4d3d"
+        },
+        fontFamily: {
+          headline: ["Sora", "sans-serif"],
+          display: ["Sora", "sans-serif"],
+          body: ["Inter", "sans-serif"],
+          label: ["Space Grotesk", "sans-serif"],
+          mono: ["JetBrains Mono", "monospace"],
+          kanji: ["Noto Serif JP", "serif"]
+        }
+      }
+    }
+  };
+</script>
+<style>
+  @layer base {
+    html, body {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      background-color: #080910;
+      color: #e8e0f0;
+      font-family: 'Inter', sans-serif;
+    }
+    body { overscroll-behavior-y: none; }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  }
+  ::-webkit-scrollbar { display: none; }
+
+  /* Glow Utilities */
+  .glow-vermilion {
+    box-shadow: 0 0 16px rgba(235, 77, 61, 0.5), inset 0 0 8px rgba(235, 77, 61, 0.3);
+  }
+  .glow-cyan {
+    box-shadow: 0 0 16px rgba(0, 255, 204, 0.4), inset 0 0 10px rgba(0, 255, 204, 0.2);
+  }
+  .glow-magenta {
+    box-shadow: 0 0 16px rgba(255, 45, 120, 0.45), inset 0 0 10px rgba(255, 45, 120, 0.2);
+  }
+
+  /* Weather Animation Keyframes - Calmed, Subtle & Slower */
+  @keyframes mistDrift {
+    0% { transform: translateX(-8px); opacity: 0.25; }
+    50% { transform: translateX(10px); opacity: 0.5; }
+    100% { transform: translateX(-8px); opacity: 0.25; }
+  }
+  .anim-mist-1 { animation: mistDrift 14s ease-in-out infinite; }
+  .anim-mist-2 { animation: mistDrift 18s ease-in-out infinite reverse; }
+
+  @keyframes treeSway {
+    0%, 100% { transform: skewX(0deg); }
+    50% { transform: skewX(-1.2deg); }
+  }
+  .anim-trees { transform-origin: bottom center; animation: treeSway 8s ease-in-out infinite; }
+
+  @keyframes waveSurge {
+    0% { transform: translateX(0) scaleY(1); }
+    50% { transform: translateX(-6px) scaleY(1.04); }
+    100% { transform: translateX(0) scaleY(1); }
+  }
+  .anim-swell-wave { animation: waveSurge 8s ease-in-out infinite; }
+
+  @keyframes galeStreak {
+    0% { transform: translate(-15px, -8px); opacity: 0; }
+    30% { opacity: 0.5; }
+    70% { opacity: 0.5; }
+    100% { transform: translate(25px, 16px); opacity: 0; }
+  }
+  .anim-gale-streak { animation: galeStreak 7s ease-in-out infinite; }
+
+  @keyframes rainFall {
+    0% { transform: translateY(-15px); opacity: 0; }
+    25% { opacity: 0.45; }
+    75% { opacity: 0.45; }
+    100% { transform: translateY(25px); opacity: 0; }
+  }
+  .anim-rain-fall { animation: rainFall 4.2s ease-in-out infinite; }
+
+  @keyframes auroraShift {
+    0% { transform: scaleY(1) translateY(0); filter: hue-rotate(0deg); opacity: 0.45; }
+    50% { transform: scaleY(1.15) translateY(-3px); filter: hue-rotate(20deg); opacity: 0.75; }
+    100% { transform: scaleY(1) translateY(0); filter: hue-rotate(0deg); opacity: 0.45; }
+  }
+  .anim-aurora-ribbon { animation: auroraShift 16s ease-in-out infinite alternate; }
+
+  @keyframes starTwinkle {
+    0%, 100% { opacity: 0.25; transform: scale(0.9); }
+    50% { opacity: 0.85; transform: scale(1.15); }
+  }
+  .anim-star { animation: starTwinkle 5s ease-in-out infinite; }
+
+  @keyframes snowDrift {
+    0% { transform: translateY(-10px) translateX(-4px) rotate(0deg); opacity: 0; }
+    25% { opacity: 0.7; }
+    75% { opacity: 0.7; }
+    100% { transform: translateY(35px) translateX(6px) rotate(90deg); opacity: 0; }
+  }
+  .anim-snow-flake { animation: snowDrift 8.5s ease-in-out infinite; }
+
+  @keyframes dmaPulse {
+    0% { width: 25%; }
+    50% { width: 75%; }
+    100% { width: 25%; }
+  }
+  .anim-dma-bar { animation: dmaPulse 4.5s ease-in-out infinite; }
+
+  @keyframes calmHeartbeat {
+    0%, 100% { opacity: 0.5; transform: scale(0.96); }
+    50% { opacity: 0.95; transform: scale(1.06); filter: drop-shadow(0 0 3px #00ffcc); }
+  }
+  .anim-heartbeat { animation: calmHeartbeat 3.2s ease-in-out infinite; }
+
+  @keyframes slowPulseVermilion {
+    0%, 100% { opacity: 0.5; transform: scale(0.95); }
+    50% { opacity: 1; transform: scale(1.05); }
+  }
+  .anim-slow-pulse { animation: slowPulseVermilion 3.5s ease-in-out infinite; }
+
+  /* Hardware Viewport Bezel and Backlight Transitions - Calmer & Softer */
+  .hardware-display-inner {
+    transition: filter 0.8s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.6s ease-in-out, box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hardware-bezel-housing {
+    transition: box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.8s ease-in-out;
+  }
+</style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-[#080910] font-body text-xs text-on-surface flex flex-col min-h-screen selection:bg-secondary selection:text-[#080910]">
+<!-- Global Toast Feedback -->
+<div class="fixed top-16 left-1/2 -translate-x-1/2 z-[100] pointer-events-none transition-all duration-500 opacity-0 -translate-y-2 flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-container-highest/95 border border-secondary text-secondary shadow-[0_8px_30px_rgba(0,255,204,0.35)] backdrop-blur-md" id="global-toast">
+<span class="material-symbols-outlined text-[16px]">check_circle</span>
+<span class="font-mono text-xs font-bold" id="toast-text">Blueprint Copied to Clipboard!</span>
+</div>
+<!-- Header: ESP32-S3 Hardware Cockpit & Neo-Ukiyo-e Studio -->
+<header class="fixed top-0 inset-x-0 z-50 bg-[#0a0a12]/92 backdrop-blur-xl pt-safe border-b border-[#302840]/70 shadow-[0_4px_24px_rgba(0,0,0,0.85)]">
+<div class="h-14 px-4 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-2.5 h-2.5 rounded-sm bg-vermilion glow-vermilion anim-slow-pulse"></div>
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="font-mono text-[9px] text-[#ff80aa] tracking-widest font-bold">ESP32-S3</span>
+<span class="text-[9px] text-[#5a5068]">::</span>
+<span class="font-mono text-[9px] text-secondary tracking-widest font-semibold">172×320 ST7789</span>
+<span class="text-[9px] text-[#5a5068]">::</span>
+<span class="font-kanji text-[10px] text-[#ffe0ec] font-bold">浮世繪</span>
+</div>
+<span class="font-headline text-xs font-extrabold text-white tracking-wider flex items-center gap-1.5">
+          ESP32-S3 Weather: Neo-Ukiyo-e Vector Backgrounds <span class="text-[9px] font-mono font-normal px-1 py-0.2 rounded bg-vermilion/20 text-vermilion border border-vermilion/40">LVGL 9.3</span>
+</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<div class="flex items-center gap-2 bg-[#141422] border border-[#302840] px-2.5 py-1 rounded">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px] text-secondary">draw</span>
+<span class="font-mono text-[9px] text-secondary">V-ENGINE</span>
+</div>
+<span class="w-px h-2.5 bg-[#302840]"></span>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px] text-tertiary">bolt</span>
+<span class="font-mono text-[9px] text-tertiary font-bold">3.3V DMA</span>
+</div>
+<span class="w-px h-2.5 bg-[#302840]"></span>
+<div class="flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary anim-heartbeat"></span>
+<span class="font-mono text-[9px] text-secondary font-bold tracking-tight" id="fps-counter">31 FPS</span>
+</div>
+</div>
+<div class="w-7 h-7 rounded border border-vermilion/40 bg-vermilion/20 flex items-center justify-center text-vermilion font-kanji font-bold text-xs" title="Hanko Seal">
+        氣
+      </div>
+</div>
+</div>
+</header>
+<!-- Main Viewport -->
+<main class="flex flex-col relative w-full pt-16 pb-24 px-3 gap-4">
+<div class="flex flex-col w-full gap-4 max-w-5xl mx-auto">
+<!-- Cascadia Ambient Banner & Geolocation Breadcrumb -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded bg-surface-container-high flex items-center justify-center text-secondary shadow-[0_0_12px_rgba(0,255,204,0.3)]">
+<span class="material-symbols-outlined text-[20px]" id="hero-weather-icon">filter_drama</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="font-headline font-bold text-sm text-on-surface tracking-tight">VANCOUVER, BC</span>
+<span class="text-on-surface-variant font-label text-[10px]">·</span>
+<span class="font-label text-[10px] text-secondary font-medium tracking-wide">49.2827° N, 123.1207° W</span>
+<span class="px-1.5 py-0.5 rounded bg-secondary/10 text-secondary font-label text-[9px] font-bold tracking-wider">SALISH SEA METRIC</span>
+</div>
+<span class="text-on-surface-variant text-[11px] font-body flex items-center gap-1">
+<span>Pacific Northwest Coastline</span>
+<span class="w-1 h-1 rounded-full bg-secondary"></span>
+<span>Dual ST7789 LVGL 9.3 Vector Canvas</span>
+</span>
+</div>
+</div>
+<!-- Quick Stat Pill Array with Calm Micro-Animations -->
+<div class="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
+<div class="group flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-variant cursor-pointer transition-all duration-300 hover:scale-102 active:scale-98 border border-transparent hover:border-secondary/30">
+<span class="material-symbols-outlined text-secondary text-[14px] group-hover:rotate-6 transition-transform">eco</span>
+<div class="flex flex-col">
+<span class="text-[8px] font-label text-on-surface-variant uppercase">AQI (Alpine)</span>
+<span class="text-[10px] font-headline font-bold text-on-surface" id="hero-aqi">12 <span class="text-secondary text-[9px]">Pristine</span></span>
+</div>
+</div>
+<div class="group flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-variant cursor-pointer transition-all duration-300 hover:scale-102 active:scale-98 border border-transparent hover:border-primary/30">
+<span class="material-symbols-outlined text-primary text-[14px] group-hover:translate-y-[-1px] transition-transform">waves</span>
+<div class="flex flex-col">
+<span class="text-[8px] font-label text-on-surface-variant uppercase">Salish Tide</span>
+<span class="text-[10px] font-headline font-bold text-on-surface" id="hero-tide">+3.8m <span class="text-primary-fixed-dim text-[9px]">Flood</span></span>
+</div>
+</div>
+<div class="group flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-variant cursor-pointer transition-all duration-300 hover:scale-102 active:scale-98 border border-transparent hover:border-tertiary/30">
+<span class="material-symbols-outlined text-tertiary text-[14px] anim-heartbeat">speed</span>
+<div class="flex flex-col">
+<span class="text-[8px] font-label text-on-surface-variant uppercase">SPI Burst</span>
+<span class="text-[10px] font-headline font-bold text-tertiary">80 MHz</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Interactive Preset Selector Strip -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col gap-2 border border-[#302840]/60">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-secondary">palette</span>
+<span class="font-headline font-bold text-xs text-on-surface">CASCADIA ATMOSPHERE PRESETS</span>
+</div>
+<span class="font-label text-[9px] text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary anim-slow-pulse"></span>
+<span>LVGL Vector Path Sets</span>
+</span>
+</div>
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+<!-- Preset 1: North Shore Alpine Mist -->
+<button class="vanc-preset-card flex flex-col text-left p-2.5 rounded bg-surface-container-high border border-secondary/60 transition-all duration-300 group shadow-[0_0_12px_rgba(0,255,204,0.25)] hover:border-secondary" id="vanc-preset-mist" onclick="selectVancouverPreset('mist')">
+<div class="flex items-center justify-between w-full mb-1">
+<span class="material-symbols-outlined text-[16px] text-secondary group-hover:scale-105 transition-transform duration-300">foggy</span>
+<span class="text-[9px] font-label font-bold text-secondary">01</span>
+</div>
+<span class="font-headline font-bold text-xs text-on-surface group-hover:text-secondary transition-colors duration-300">Alpine Mist</span>
+<span class="font-body text-[10px] text-on-surface-variant line-clamp-1">North Shore rain &amp; low cloud</span>
+</button>
+<!-- Preset 2: English Bay Gale -->
+<button class="vanc-preset-card flex flex-col text-left p-2.5 rounded bg-surface-container-low border border-transparent transition-all duration-300 group hover:border-primary/40 hover:bg-surface-container-high" id="vanc-preset-gale" onclick="selectVancouverPreset('gale')">
+<div class="flex items-center justify-between w-full mb-1">
+<span class="material-symbols-outlined text-[16px] text-primary group-hover:scale-105 transition-transform duration-300">air</span>
+<span class="text-[9px] font-label font-bold text-on-surface-variant">02</span>
+</div>
+<span class="font-headline font-bold text-xs text-on-surface group-hover:text-primary transition-colors duration-300">Pacific Gale</span>
+<span class="font-body text-[10px] text-on-surface-variant line-clamp-1">English Bay ocean swells</span>
+</button>
+<!-- Preset 3: Cascadia Emerald Aurora -->
+<button class="vanc-preset-card flex flex-col text-left p-2.5 rounded bg-surface-container-low border border-transparent transition-all duration-300 group hover:border-secondary/40 hover:bg-surface-container-high" id="vanc-preset-aurora" onclick="selectVancouverPreset('aurora')">
+<div class="flex items-center justify-between w-full mb-1">
+<span class="material-symbols-outlined text-[16px] text-secondary group-hover:scale-105 transition-transform duration-300">nights_stay</span>
+<span class="text-[9px] font-label font-bold text-on-surface-variant">03</span>
+</div>
+<span class="font-headline font-bold text-xs text-on-surface group-hover:text-secondary transition-colors duration-300">Emerald Aurora</span>
+<span class="font-body text-[10px] text-on-surface-variant line-clamp-1">Geomagnetic glow &amp; stars</span>
+</button>
+<!-- Preset 4: Whistler High-Alpine Flurry -->
+<button class="vanc-preset-card flex flex-col text-left p-2.5 rounded bg-surface-container-low border border-transparent transition-all duration-300 group hover:border-tertiary/40 hover:bg-surface-container-high" id="vanc-preset-flurry" onclick="selectVancouverPreset('flurry')">
+<div class="flex items-center justify-between w-full mb-1">
+<span class="material-symbols-outlined text-[16px] text-tertiary group-hover:scale-105 transition-transform duration-300">ac_unit</span>
+<span class="text-[9px] font-label font-bold text-on-surface-variant">04</span>
+</div>
+<span class="font-headline font-bold text-xs text-on-surface group-hover:text-tertiary transition-colors duration-300">Whistler Flurry</span>
+<span class="font-body text-[10px] text-on-surface-variant line-clamp-1">Sub-zero powder &amp; frost</span>
+</button>
+</div>
+</div>
+<!-- Interactive Day/Night Hardware PWM Simulator Control Strip -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col sm:flex-row items-center justify-between gap-3 border border-[#302840]/60">
+<div class="flex items-center gap-3 w-full sm:w-auto">
+<div class="w-8 h-8 rounded-lg bg-surface-container-high flex items-center justify-center text-secondary shadow-inner">
+<span class="material-symbols-outlined text-[18px]">tune</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-headline font-bold text-xs text-on-surface">HARDWARE PWM BACKLIGHT SIMULATOR</span>
+<span class="px-1.5 py-0.2 rounded bg-tertiary/10 text-tertiary font-mono text-[9px] font-bold">LEDC CH:0</span>
+</div>
+<span class="font-body text-[10px] text-on-surface-variant">Calm duty cycle ramp, bezel backlight bleed, and dynamic current telemetry</span>
+</div>
+</div>
+<!-- Dual Mode Toggle Pill -->
+<div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+<div class="inline-flex p-1 rounded-lg bg-surface-container-lowest border border-[#302840]">
+<button class="flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-headline font-bold bg-secondary/20 text-secondary border border-secondary/40 transition-all duration-300" id="mode-day-btn" onclick="setBacklightHardwareMode('day')">
+<span class="material-symbols-outlined text-[13px]">wb_sunny</span>
+<span>DAY 100% (112mA)</span>
+</button>
+<button class="flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-headline font-bold text-on-surface-variant hover:text-on-surface transition-all duration-300" id="mode-night-btn" onclick="setBacklightHardwareMode('night')">
+<span class="material-symbols-outlined text-[13px]">dark_mode</span>
+<span>NIGHT 35% (51mA)</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Dual Hardware Viewport Simulation (172x320 ST7789) -->
+<div class="flex flex-col lg:flex-row gap-6 items-center justify-center my-1">
+<!-- Day Viewport Hardware Frame (is_day = 1) -->
+<div class="flex flex-col items-center gap-2 w-full max-w-[340px]">
+<!-- Hardware Header Label -->
+<div class="flex items-center justify-between w-full px-2">
+<div class="flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-secondary shadow-[0_0_8px_#00ffcc]" id="port-day-led"></span>
+<span class="font-label text-[10px] font-bold text-secondary uppercase tracking-wider" id="port-day-label">PORT 01: DAYTIME (100% PWM)</span>
+</div>
+<span class="font-mono text-[9px] text-on-surface-variant" id="port-day-telemetry">112 mA · 560 mW</span>
+</div>
+<!-- Physical 1.47" ST7789 Bezel Housing -->
+<div class="hardware-bezel-housing w-[210px] p-2.5 rounded-xl bg-surface-container-lowest shadow-xl border border-secondary/30 flex flex-col items-center relative" id="bezel-day">
+<!-- Tiny Board Silkscreen Details -->
+<div class="w-full flex justify-between items-center text-[7px] font-label text-on-surface-variant mb-1 px-1">
+<span>ESP32-S3-TINY-1.47</span>
+<span class="text-secondary font-bold">172×320 IPS</span>
+<span class="text-tertiary">VCC: 3.3V</span>
+</div>
+<!-- ST7789 Display Surface (172 x 320 Aspect Ratio Scaled) -->
+<div class="hardware-display-inner w-[172px] h-[320px] rounded bg-surface-container overflow-hidden relative flex flex-col select-none shadow-[0_0_18px_rgba(0,255,204,0.18)]" id="screen-day">
+<!-- Vector Art Layer (Cascadia Daylight: North Shore Peaks & English Bay) -->
+<div class="absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-500 ease-in-out" id="vanc-day-art">
+<!-- Dynamic Daylight Backdrop SVG -->
+<svg class="absolute inset-0 w-full h-full" fill="none" viewbox="0 0 172 320" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<lineargradient id="vancDaySky" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#0f2b38"></stop>
+<stop offset="55%" stop-color="#1b4956"></stop>
+<stop offset="100%" stop-color="#2c6975"></stop>
+</lineargradient>
+<lineargradient id="vancDaySea" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#143c47"></stop>
+<stop offset="100%" stop-color="#081e24"></stop>
+</lineargradient>
+<lineargradient id="peakSun" x1="0" x2="1" y1="0" y2="1">
+<stop offset="0%" stop-color="#ffe04a" stop-opacity="0.25"></stop>
+<stop offset="100%" stop-color="#00ffcc" stop-opacity="0.0"></stop>
+</lineargradient>
+<radialgradient cx="50%" cy="30%" id="auroraGlowDay" r="50%">
+<stop offset="0%" stop-color="#00ffcc" stop-opacity="0.3"></stop>
+<stop offset="100%" stop-color="#00ffcc" stop-opacity="0"></stop>
+</radialgradient>
+</defs>
+<!-- Day Sky -->
+<rect fill="url(#vancDaySky)" height="320" width="172"></rect>
+<!-- Ambient Sun Glow Halo - Calm subtle breathe -->
+<circle class="anim-star" cx="130" cy="80" fill="url(#peakSun)" r="44"></circle>
+<circle cx="130" cy="80" fill="#ffe04a" fill-opacity="0.55" r="13"></circle>
+<!-- Dynamic Weather Atmosphere Layer: Drifting Mist & Clouds (Calm & Softer) -->
+<g class="anim-mist-1" id="day-vector-clouds" opacity="0.45">
+<ellipse cx="60" cy="115" fill="#c0fff4" opacity="0.18" rx="55" ry="11"></ellipse>
+<ellipse cx="120" cy="100" fill="#c0fff4" opacity="0.2" rx="45" ry="9"></ellipse>
+</g>
+<g class="anim-mist-2" id="day-vector-clouds-2" opacity="0.35">
+<ellipse cx="90" cy="135" fill="#80e5d4" opacity="0.15" rx="58" ry="12"></ellipse>
+</g>
+<!-- Distant Range: The Lions (Twin Peaks) Silhouette -->
+<path d="M-10 145 L35 110 L50 120 L80 92 L95 106 L125 78 L142 98 L185 138 L185 210 L-10 210 Z" fill="#123640" opacity="0.95"></path>
+<!-- Lions Peak Glacier Crest Highlights -->
+<path d="M80 92 L74 102 L86 102 Z" fill="#c0fff4" opacity="0.65"></path>
+<path d="M125 78 L118 90 L132 90 Z" fill="#c0fff4" opacity="0.75"></path>
+<!-- Midground: Grouse Mountain & Cypress Alpine Slopes -->
+<path d="M-10 165 L40 140 L90 162 L130 135 L185 168 L185 240 L-10 240 Z" fill="#0c252d" opacity="0.95"></path>
+<!-- Coastal Evergreen Conifer Silhouettes (With Gentle Sway) -->
+<g class="anim-trees" fill="#07191f">
+<polygon points="12,192 16,170 20,192"></polygon>
+<polygon points="18,194 22,176 26,194"></polygon>
+<polygon points="28,198 33,172 38,198"></polygon>
+<polygon points="45,190 49,166 53,190"></polygon>
+<polygon points="135,188 139,168 143,188"></polygon>
+<polygon points="148,195 153,172 158,195"></polygon>
+<polygon points="156,190 160,174 164,190"></polygon>
+</g>
+<!-- Salish Sea / English Bay Coastal Waters -->
+<rect fill="url(#vancDaySea)" height="124" width="172" x="0" y="196"></rect>
+<!-- Gentle Animated Water Vector Waves -->
+<g class="anim-swell-wave">
+<path d="M-10 212 C30 209, 60 214, 100 211 C140 208, 160 213, 185 212" stroke="#00ffcc" stroke-opacity="0.3" stroke-width="0.75"></path>
+<path d="M-10 226 C25 223, 65 226, 110 224 C145 222, 165 225, 185 225" stroke="#c0fff4" stroke-opacity="0.25" stroke-width="0.65"></path>
+<path d="M-10 244 C40 241, 80 245, 130 242 C155 241, 165 243, 185 244" stroke="#00ffcc" stroke-opacity="0.2" stroke-width="0.65"></path>
+</g>
+<!-- Lions Gate Suspension Bridge Graphic Line Accent -->
+<line stroke="#00ffcc" stroke-opacity="0.45" stroke-width="1.1" x1="20" x2="70" y1="184" y2="184"></line>
+<line stroke="#00ffcc" stroke-opacity="0.7" stroke-width="1.2" x1="45" x2="45" y1="172" y2="184"></line>
+<line stroke="#00ffcc" stroke-dasharray="2 2" stroke-opacity="0.5" stroke-width="0.65" x1="20" x2="45" y1="184" y2="172"></line>
+<line stroke="#00ffcc" stroke-dasharray="2 2" stroke-opacity="0.5" stroke-width="0.65" x1="70" x2="45" y1="184" y2="172"></line>
+</svg>
+<!-- Cascadia Weather Dynamic Particle Canvas (Clean & Subtle) -->
+<svg class="absolute inset-0 w-full h-full" fill="none" id="vanc-day-weather-particles" viewbox="0 0 172 320">
+<!-- Dynamic injection from JS -->
+</svg>
+</div>
+<!-- Foreground UI Data Layer (LVGL ST7789 Layout) -->
+<div class="relative z-10 flex flex-col justify-between h-full p-2 text-on-surface">
+<!-- Top Status Row -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[11px] text-secondary">navigation</span>
+<span class="font-headline font-bold text-[9px] tracking-wider text-secondary">VANCOUVER</span>
+</div>
+<div class="flex items-center gap-1">
+<span class="font-mono text-[8px] text-tertiary font-bold">11:28</span>
+<span class="material-symbols-outlined text-[10px] text-secondary">wifi</span>
+</div>
+</div>
+<!-- Main Temperature Hero Unit -->
+<div class="flex flex-col items-start my-auto">
+<div class="flex items-baseline">
+<span class="font-headline font-extrabold text-[44px] leading-none text-on-surface tracking-tight" id="day-temp">11</span>
+<span class="font-headline font-semibold text-lg text-secondary ml-0.5">°C</span>
+</div>
+<span class="font-label text-[8px] uppercase tracking-widest text-secondary font-bold mt-0.5" id="day-cond-title">PACIFIC DRIZZLE</span>
+<span class="font-body text-[8px] text-on-surface-variant font-medium" id="day-range">H: 14° · L: 8°</span>
+</div>
+<!-- Bottom Weather Sensor Telemetry Card -->
+<div class="rounded p-1.5 bg-surface-container-high/90 backdrop-blur-sm flex flex-col gap-1 shadow-sm border border-[#302840]/60">
+<div class="grid grid-cols-3 text-center gap-0.5">
+<div class="flex flex-col items-center">
+<span class="font-label text-[7px] text-on-surface-variant uppercase">HUMID</span>
+<span class="font-mono text-[9px] font-bold text-secondary" id="day-hum">82%</span>
+</div>
+<div class="flex flex-col items-center">
+<span class="font-label text-[7px] text-on-surface-variant uppercase">WIND</span>
+<span class="font-mono text-[9px] font-bold text-on-surface" id="day-wind">16k WNW</span>
+</div>
+<div class="flex flex-col items-center">
+<span class="font-label text-[7px] text-on-surface-variant uppercase">AQI</span>
+<span class="font-mono text-[9px] font-bold text-secondary" id="day-aqi">12 CLR</span>
+</div>
+</div>
+<div class="w-full flex justify-between items-center text-[7px] font-mono text-on-surface-variant pt-0.5 border-t border-[#302840]/40">
+<span class="flex items-center gap-0.5">
+<span class="w-1 h-1 rounded-full bg-secondary"></span>
+<span id="day-tag">thorvg_vanc_day.path</span>
+</span>
+<span class="text-tertiary">30 FPS</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Pinout Footer Silkscreen -->
+<div class="w-full flex justify-between items-center text-[7px] font-mono text-on-surface-variant mt-1.5 px-1">
+<span>MOSI:45</span>
+<span>SCLK:40</span>
+<span>CS:42</span>
+<span>DC:41</span>
+<span>RST:39</span>
+<span class="text-secondary font-bold" id="silkscreen-day-bl">BL:48</span>
+</div>
+</div>
+</div>
+<!-- Night Viewport Hardware Frame (is_day = 0) -->
+<div class="flex flex-col items-center gap-2 w-full max-w-[340px]">
+<!-- Hardware Header Label -->
+<div class="flex items-center justify-between w-full px-2">
+<div class="flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_#ff2d78]" id="port-night-led"></span>
+<span class="font-label text-[10px] font-bold text-primary-fixed-dim uppercase tracking-wider" id="port-night-label">PORT 02: NOCTURNE (35% PWM)</span>
+</div>
+<span class="font-mono text-[9px] text-on-surface-variant" id="port-night-telemetry">51 mA · 255 mW (-54%)</span>
+</div>
+<!-- Physical 1.47" ST7789 Bezel Housing -->
+<div class="hardware-bezel-housing w-[210px] p-2.5 rounded-xl bg-surface-container-lowest shadow-xl border border-primary/30 flex flex-col items-center relative" id="bezel-night">
+<!-- Tiny Board Silkscreen Details -->
+<div class="w-full flex justify-between items-center text-[7px] font-label text-on-surface-variant mb-1 px-1">
+<span>BURRARD-INLET-NOCTURNE</span>
+<span class="text-primary font-bold">ST7789_PWM_35%</span>
+<span class="text-tertiary">DMA_EN</span>
+</div>
+<!-- ST7789 Display Surface -->
+<div class="hardware-display-inner w-[172px] h-[320px] rounded bg-surface-container-lowest overflow-hidden relative flex flex-col select-none shadow-[0_0_18px_rgba(255,45,120,0.15)]" id="screen-night">
+<!-- Vector Art Layer (Cascadia Night: Burrard Inlet & Lions Gate Nocturne) -->
+<div class="absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-500 ease-in-out" id="vanc-night-art">
+<!-- Sky Gradient & Distant Coast Mountain Range -->
+<svg class="absolute inset-0 w-full h-full" fill="none" viewbox="0 0 172 320" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<lineargradient id="vancNightSky" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#050811"></stop>
+<stop offset="60%" stop-color="#091322"></stop>
+<stop offset="100%" stop-color="#0f2233"></stop>
+</lineargradient>
+<lineargradient id="vancNightWater" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#071520"></stop>
+<stop offset="100%" stop-color="#03070d"></stop>
+</lineargradient>
+<lineargradient id="auroraGaze" x1="0" x2="1" y1="0" y2="0">
+<stop offset="0%" stop-color="#00ffcc" stop-opacity="0.0"></stop>
+<stop offset="50%" stop-color="#00ffcc" stop-opacity="0.25"></stop>
+<stop offset="100%" stop-color="#ff2d78" stop-opacity="0.15"></stop>
+</lineargradient>
+</defs>
+<rect fill="url(#vancNightSky)" height="320" width="172"></rect>
+<!-- Undulating Emerald Aurora Atmospheric Ribbon Waves - Gentle and Graceful -->
+<path class="anim-aurora-ribbon" d="M-10 65 Q40 44 90 68 T190 48 L190 120 L-10 120 Z" fill="url(#auroraGaze)" opacity="0.65"></path>
+<path class="anim-aurora-ribbon" d="M-10 82 Q50 64 110 84 T190 72 L190 130 L-10 130 Z" fill="url(#auroraGaze)" opacity="0.45" style="animation-delay: 5s;"></path>
+<!-- Twinkling Starlight Sky Constellations - Relaxed Breathing -->
+<g fill="#ffffff">
+<circle class="anim-star" cx="35" cy="30" r="0.75"></circle>
+<circle class="anim-star" cx="75" cy="22" r="0.95" style="animation-delay: 1.8s;"></circle>
+<circle class="anim-star" cx="115" cy="35" r="0.8" style="animation-delay: 3.2s;"></circle>
+<circle class="anim-star" cx="155" cy="28" r="1.0" style="animation-delay: 1.0s;"></circle>
+<circle class="anim-star" cx="20" cy="55" r="0.65" style="animation-delay: 2.6s;"></circle>
+<circle class="anim-star" cx="85" cy="65" r="0.7" style="animation-delay: 4.2s;"></circle>
+</g>
+<!-- Waxing Crescent Moon over Coastal Range -->
+<path d="M136 48 A11 11 0 1 0 148 64 A13 13 0 1 1 136 48 Z" fill="#ffe04a" filter="drop-shadow(0 0 5px #ffe04a)" opacity="0.85"></path>
+<!-- North Shore Mountain Ridge (Deep Sumi Silhouettes) -->
+<path d="M-10 148 L30 115 L52 125 L84 96 L102 112 L132 82 L150 102 L185 142 L185 212 L-10 212 Z" fill="#060e18"></path>
+<!-- Summit Snow Glint under Starlight -->
+<path d="M84 96 L79 104 L89 104 Z" fill="#00ffcc" opacity="0.45"></path>
+<path d="M132 82 L126 92 L138 92 Z" fill="#00ffcc" opacity="0.55"></path>
+<!-- Foreshore Pine Ridge Silhouette with Gentle Sway -->
+<path class="anim-trees" d="M-10 172 L45 148 L95 170 L138 144 L185 176 L185 240 L-10 240 Z" fill="#03080e"></path>
+<!-- Waterfront Burrard Inlet / Pacific Ocean -->
+<rect fill="url(#vancNightWater)" height="124" width="172" x="0" y="196"></rect>
+<!-- Lions Gate Suspension Bridge Night Graphic with Cable Reflections -->
+<g opacity="0.85">
+<!-- Bridge Towers -->
+<line stroke="#00ffcc" stroke-width="1.2" x1="42" x2="42" y1="168" y2="186"></line>
+<line stroke="#00ffcc" stroke-width="0.8" x1="44" x2="44" y1="168" y2="186"></line>
+<circle class="anim-star" cx="43" cy="167" fill="#ff2d78" r="1.3"></circle>
+<!-- Road Deck -->
+<line stroke="#c0fff4" stroke-width="1.0" x1="15" x2="75" y1="184" y2="184"></line>
+<!-- Suspension Cables -->
+<path d="M15 176 Q43 183 75 176" fill="none" stroke="#00ffcc" stroke-width="0.65"></path>
+<!-- Emerald Water Reflection Beams -->
+<line opacity="0.4" stroke="#00ffcc" stroke-dasharray="3 4" stroke-width="1.1" x1="43" x2="43" y1="198" y2="245"></line>
+<line opacity="0.3" stroke="#ff2d78" stroke-dasharray="2 3" stroke-width="0.8" x1="28" x2="28" y1="202" y2="230"></line>
+</g>
+<!-- Tide Ripples in Nocturne (Calm Waves) -->
+<g class="anim-swell-wave">
+<path d="M-10 216 C35 214, 65 217, 105 214 C145 212, 160 216, 185 216" stroke="#00ffcc" stroke-opacity="0.25" stroke-width="0.7"></path>
+<path d="M-10 234 C45 231, 80 236, 125 232 C155 230, 165 234, 185 234" stroke="#ff2d78" stroke-opacity="0.2" stroke-width="0.55"></path>
+<path d="M-10 258 C30 256, 75 259, 115 256 C145 254, 165 258, 185 258" stroke="#00ffcc" stroke-opacity="0.18" stroke-width="0.6"></path>
+</g>
+</svg>
+<!-- Night Weather Particle Vectors (Subtle & Calmed) -->
+<svg class="absolute inset-0 w-full h-full" fill="none" id="vanc-night-weather-particles" viewbox="0 0 172 320">
+<!-- Dynamic injection from JS -->
+</svg>
+</div>
+<!-- Foreground UI Data Layer -->
+<div class="relative z-10 flex flex-col justify-between h-full p-2 text-on-surface">
+<!-- Top Status Row -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[11px] text-primary">bedtime</span>
+<span class="font-headline font-bold text-[9px] tracking-wider text-primary-fixed-dim">BURRARD INLET</span>
+</div>
+<div class="flex items-center gap-1">
+<span class="font-mono text-[8px] text-primary font-bold">23:42</span>
+<span class="material-symbols-outlined text-[10px] text-primary">dark_mode</span>
+</div>
+</div>
+<!-- Main Temperature Hero Unit -->
+<div class="flex flex-col items-start my-auto">
+<div class="flex items-baseline">
+<span class="font-headline font-extrabold text-[44px] leading-none text-on-surface tracking-tight" id="night-temp">07</span>
+<span class="font-headline font-semibold text-lg text-primary-fixed-dim ml-0.5">°C</span>
+</div>
+<span class="font-label text-[8px] uppercase tracking-widest text-primary-fixed-dim font-bold mt-0.5" id="night-cond-title">MISTY INLET RAIN</span>
+<span class="font-body text-[8px] text-on-surface-variant font-medium" id="night-range">H: 12° · L: 6°</span>
+</div>
+<!-- Bottom Weather Sensor Telemetry Card -->
+<div class="rounded p-1.5 bg-surface-container-high/90 backdrop-blur-sm flex flex-col gap-1 shadow-sm border border-[#302840]/60">
+<div class="grid grid-cols-3 text-center gap-0.5">
+<div class="flex flex-col items-center">
+<span class="font-label text-[7px] text-on-surface-variant uppercase">HUMID</span>
+<span class="font-mono text-[9px] font-bold text-secondary" id="night-hum">89%</span>
+</div>
+<div class="flex flex-col items-center">
+<span class="font-label text-[7px] text-on-surface-variant uppercase">WIND</span>
+<span class="font-mono text-[9px] font-bold text-on-surface" id="night-wind">12k W</span>
+</div>
+<div class="flex flex-col items-center">
+<span class="font-label text-[7px] text-on-surface-variant uppercase">BARO</span>
+<span class="font-mono text-[9px] font-bold text-primary" id="night-baro">1018hPa</span>
+</div>
+</div>
+<div class="w-full flex justify-between items-center text-[7px] font-mono text-on-surface-variant pt-0.5 border-t border-[#302840]/40">
+<span class="flex items-center gap-0.5">
+<span class="w-1 h-1 rounded-full bg-primary"></span>
+<span id="night-tag">thorvg_vanc_nocturne.path</span>
+</span>
+<span class="text-secondary font-bold" id="night-pwr-savings">-54% PWR</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Pinout Footer Silkscreen -->
+<div class="w-full flex justify-between items-center text-[7px] font-mono text-on-surface-variant mt-1.5 px-1">
+<span>MOSI:45</span>
+<span>SCLK:40</span>
+<span>CS:42</span>
+<span>DC:41</span>
+<span>RST:39</span>
+<span class="text-primary font-bold" id="silkscreen-night-pwm">PWM:35%</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Hardware Benchmarks & Performance Metrics (Bento Grid) -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+<!-- Metric 1: Vector Footprint -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col justify-between border border-[#302840]/50 hover:border-secondary/30 transition-colors">
+<div class="flex items-center justify-between mb-2">
+<span class="font-label text-[10px] text-on-surface-variant font-bold uppercase tracking-wider">ROM Flash Footprint</span>
+<span class="material-symbols-outlined text-secondary text-[16px]">memory</span>
+</div>
+<div class="flex items-baseline gap-1.5">
+<span class="font-headline font-extrabold text-2xl text-on-surface" id="stat-flash-val">14.2</span>
+<span class="font-label text-xs text-secondary font-bold">KB (Vector)</span>
+</div>
+<div class="mt-2 flex flex-col gap-1">
+<div class="w-full h-1.5 bg-surface-container-high rounded overflow-hidden">
+<div class="w-[9%] h-full bg-secondary"></div>
+</div>
+<div class="flex justify-between text-[8px] font-mono text-on-surface-variant">
+<span>ThorVG Bezier: 14.2 KB</span>
+<span class="line-through text-on-surface-variant/60">PNG SPIFFS: 158 KB</span>
+</div>
+</div>
+</div>
+<!-- Metric 2: SPI Burst Latency with Live DMA Progress Bar -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col justify-between border border-[#302840]/50 hover:border-tertiary/30 transition-colors">
+<div class="flex items-center justify-between mb-2">
+<span class="font-label text-[10px] text-on-surface-variant font-bold uppercase tracking-wider">ST7789 DMA Latency</span>
+<span class="material-symbols-outlined text-tertiary text-[16px]">bolt</span>
+</div>
+<div class="flex items-baseline gap-1.5">
+<span class="font-headline font-extrabold text-2xl text-on-surface" id="stat-dma-val">1.35</span>
+<span class="font-label text-xs text-tertiary font-bold">ms / 20-line burst</span>
+</div>
+<div class="mt-2 flex flex-col gap-1">
+<div class="w-full h-1.5 bg-surface-container-high rounded overflow-hidden relative">
+<div class="anim-dma-bar h-full bg-tertiary rounded"></div>
+</div>
+<div class="flex justify-between text-[8px] font-mono text-on-surface-variant">
+<span class="flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary anim-heartbeat"></span>
+<span>80MHz Non-Blocking DMA</span>
+</span>
+<span class="text-tertiary font-bold">Zero Tearing</span>
+</div>
+</div>
+</div>
+<!-- Metric 3: Backlight Efficiency -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col justify-between border border-[#302840]/50 hover:border-primary/30 transition-colors">
+<div class="flex items-center justify-between mb-2">
+<span class="font-label text-[10px] text-on-surface-variant font-bold uppercase tracking-wider">Backlight Power Curve</span>
+<span class="material-symbols-outlined text-primary text-[16px]">battery_charging_full</span>
+</div>
+<div class="flex items-baseline gap-1.5">
+<span class="font-headline font-extrabold text-2xl text-on-surface" id="stat-power-val">255</span>
+<span class="font-label text-xs text-primary-fixed-dim font-bold" id="stat-power-label">mW (Night Mode)</span>
+</div>
+<div class="mt-2 flex flex-col gap-1">
+<div class="w-full h-1.5 bg-surface-container-high rounded overflow-hidden">
+<div class="h-full bg-primary transition-all duration-700" id="stat-power-bar" style="width: 45%;"></div>
+</div>
+<div class="flex justify-between text-[8px] font-mono text-on-surface-variant">
+<span id="stat-power-sub">35% PWM: 51mA (-54%)</span>
+<span class="text-on-surface-variant">100% PWM: 112mA</span>
+</div>
+</div>
+</div>
+</div>
+<!-- LVGL 9.3 Production C++ Firmware Blueprint Card -->
+<div class="bg-surface-container rounded-xl p-3 shadow-md flex flex-col gap-2.5 border border-[#302840]/60">
+<div class="flex items-center justify-between flex-wrap gap-2">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded bg-surface-container-high flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined text-[15px]">code</span>
+</div>
+<div>
+<span class="font-headline font-bold text-xs text-on-surface">esp32s3_vancouver_weather.cpp</span>
+<span class="font-label text-[9px] text-on-surface-variant ml-1.5 font-medium">LVGL 9.3 · ThorVG · LEDC PWM</span>
+</div>
+</div>
+<button class="flex items-center gap-1 px-3 py-1 rounded bg-surface-container-high text-on-surface hover:text-secondary hover:border-secondary/40 border border-[#302840] text-xs transition-all duration-300 active:scale-95 shadow-sm" id="btn-copy-code" onclick="copyVancouverFirmware()">
+<span class="material-symbols-outlined text-[14px]" id="copy-icon">content_copy</span>
+<span class="font-label text-[10px] font-bold" id="copy-label">Copy Blueprint</span>
+</button>
+</div>
+<!-- Syntax Code Box -->
+<pre class="bg-surface-container-lowest p-3 rounded text-[10px] font-mono text-on-surface overflow-x-auto leading-relaxed max-h-[300px] select-all border border-[#302840]/40"><code id="vanc-code-block">#include &lt;Arduino.h&gt;
+#include &lt;lvgl.h&gt;
+#include &lt;TFT_eSPI.h&gt;
+
+// ESP32-S3-TINY-1.47 ST7789 Pin Configuration
+#define LCD_MOSI   45
+#define LCD_SCLK   40
+#define LCD_CS     42
+#define LCD_DC     41
+#define LCD_RST    39
+#define LCD_BL     48  // LEDC PWM Backlight
+
+#define LCD_WIDTH  172
+#define LCD_HEIGHT 320
+#define PWM_FREQ   5000
+#define PWM_RES    8
+
+static lv_display_t *disp;
+static lv_color_t buf[LCD_WIDTH * 20]; // 20-line non-blocking burst DMA
+
+// Vancouver Coordinates &amp; Telemetry Structure
+struct VancouverMetData {
+    float lat = 49.2827;
+    float lon = -123.1207;
+    float temp_c = 11.2;
+    int   humidity = 82;
+    float wind_kph = 16.0;
+    int   is_day = 1; // 1 = Pacific Daylight, 0 = Nocturne
+} vanc_met;
+
+// Smooth LEDC PWM Ramp for Maritime Day/Night Transition
+void set_backlight_ratio(uint8_t duty_cycle) {
+    ledcWrite(0, duty_cycle); // 255 = 100% (112mA), 89 = 35% (51mA)
+}
+
+// LVGL 9 ThorVG Vector Drawing Callback: Cascadia Mountains &amp; Waters
+static void draw_cascadia_vector(lv_event_t * e) {
+    lv_layer_t * layer = lv_event_get_layer(e);
+    lv_draw_vector_dsc_t dsc;
+    lv_draw_vector_dsc_init(&amp;dsc);
+
+    // Salish Sea Dynamic Horizon Gradient
+    lv_draw_vector_path_t * path = lv_vector_path_create();
+    
+    // North Shore Peak Ridge: The Lions Silhouette
+    lv_vector_path_move_to(path, -10, 145);
+    lv_vector_path_line_to(path, 35, 110);
+    lv_vector_path_line_to(path, 80, 92);   // West Lion peak
+    lv_vector_path_line_to(path, 125, 78);  // East Lion peak
+    lv_vector_path_line_to(path, 185, 140);
+    lv_vector_path_line_to(path, 185, 210);
+    lv_vector_path_line_to(path, -10, 210);
+    lv_vector_path_close(path);
+
+    dsc.fill_dsc.color = vanc_met.is_day ? lv_color_hex(0x123640) : lv_color_hex(0x060e18);
+    dsc.fill_dsc.opa = LV_OPA_COVER;
+    lv_draw_vector(layer, &amp;dsc, path);
+    lv_vector_path_delete(path);
+
+    // English Bay Water Ripples (Zero Heap Alloc)
+    path = lv_vector_path_create();
+    lv_vector_path_move_to(path, 0, 215);
+    lv_vector_path_quad_to(path, 86, 210, 172, 215);
+    dsc.stroke_dsc.color = vanc_met.is_day ? lv_color_hex(0x00ffcc) : lv_color_hex(0x00e6b8);
+    dsc.stroke_dsc.width = 1.2f;
+    dsc.stroke_dsc.opa = LV_OPA_50;
+    lv_draw_vector(layer, &amp;dsc, path);
+    lv_vector_path_delete(path);
+}
+
+void setup() {
+    Serial.begin(115200);
+    ledcSetup(0, PWM_FREQ, PWM_RES);
+    ledcAttachPin(LCD_BL, 0);
+    set_backlight_ratio(vanc_met.is_day ? 255 : 89); // Set Day/Night PWM
+
+    lv_init();
+    disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
+    lv_display_set_buffers(disp, buf, NULL, sizeof(buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    
+    // Attach ThorVG Vector Canvas
+    lv_obj_t * canvas = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(canvas, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_add_event_cb(canvas, draw_cascadia_vector, LV_EVENT_DRAW_MAIN, NULL);
+}
+
+void loop() {
+    lv_timer_handler();
+    delay(5);
+}</code></pre>
+<div class="flex items-center justify-between text-[8px] font-mono text-on-surface-variant px-1">
+<span class="flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+<span>Compiler Target: ESP-IDF v5.1 / Arduino-ESP32 v3.0+</span>
+</span>
+<span>Flash: QIO 80MHz · SPIRAM: OPI 80MHz</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation Bar (Studio Theme) -->
+<nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-[#0a0a12]/95 backdrop-blur-xl border-t border-[#302840]/80 shadow-[0_-4px_24px_rgba(0,0,0,0.9)]">
+<div class="flex justify-around items-center h-14 px-2">
+<a class="flex flex-col items-center justify-center gap-0.5 min-w-[68px] h-11 rounded px-2 text-secondary transition-all" href="#">
+<span class="material-symbols-outlined text-[19px]">visibility</span>
+<span class="font-mono text-[8px] font-bold tracking-widest uppercase">Mockup</span>
+</a>
+<a class="flex flex-col items-center justify-center gap-0.5 min-w-[68px] h-11 rounded px-2 text-[#a098b0] hover:text-secondary transition-all" href="#">
+<span class="material-symbols-outlined text-[19px]">draw</span>
+<span class="font-mono text-[8px] font-bold tracking-widest uppercase">Vectors</span>
+</a>
+<a class="flex flex-col items-center justify-center gap-0.5 min-w-[68px] h-11 rounded px-2 text-[#a098b0] hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined text-[19px]">terminal</span>
+<span class="font-mono text-[8px] font-bold tracking-widest uppercase">LVGL 9.3</span>
+</a>
+</div>
+</nav>
+<!-- Client-side Dynamic Engine Script -->
+<script>
+  // Calmed, Subtly Reduced Cascadia Weather Presets Data with Soft Movements
+  const VANC_DATA = {
+    mist: {
+      id: "mist",
+      heroIcon: "foggy",
+      heroAqi: "12",
+      heroAqiLabel: "Pristine",
+      heroTide: "+3.8m",
+      heroTideLabel: "Flood",
+      day: {
+        temp: "11",
+        cond: "PACIFIC DRIZZLE",
+        range: "H: 14° · L: 8°",
+        hum: "82%",
+        wind: "16k WNW",
+        aqi: "12 CLR",
+        tag: "thorvg_vanc_day.path",
+        particles: `
+          <!-- Alpine Mist: Calmed, slow ambient drizzle drops (3-5s, fine lines) -->
+          <g class="anim-rain-fall">
+            <line x1="35" y1="35" x2="33" y2="48" stroke="#00ffcc" stroke-width="0.75" stroke-linecap="round" opacity="0.38"/>
+            <line x1="85" y1="20" x2="83" y2="34" stroke="#c0fff4" stroke-width="0.65" stroke-linecap="round" opacity="0.32"/>
+            <line x1="130" y1="45" x2="128" y2="58" stroke="#00ffcc" stroke-width="0.75" stroke-linecap="round" opacity="0.4"/>
+            <line x1="55" y1="110" x2="53" y2="124" stroke="#c0fff4" stroke-width="0.65" stroke-linecap="round" opacity="0.3"/>
+          </g>
+        `
+      },
+      night: {
+        temp: "07",
+        cond: "MISTY INLET RAIN",
+        range: "H: 12° · L: 6°",
+        hum: "89%",
+        wind: "12k W",
+        baro: "1018hPa",
+        tag: "thorvg_vanc_nocturne.path",
+        particles: `
+          <!-- Night Calmed Inlet Raindrops -->
+          <g class="anim-rain-fall">
+            <line x1="40" y1="40" x2="38" y2="52" stroke="#00ffcc" stroke-width="0.7" stroke-linecap="round" opacity="0.35"/>
+            <line x1="105" y1="30" x2="103" y2="44" stroke="#c0fff4" stroke-width="0.65" stroke-linecap="round" opacity="0.3"/>
+            <line x1="140" y1="65" x2="138" y2="78" stroke="#ff2d78" stroke-width="0.7" stroke-linecap="round" opacity="0.35"/>
+          </g>
+        `
+      }
+    },
+    gale: {
+      id: "gale",
+      heroIcon: "air",
+      heroAqi: "08",
+      heroAqiLabel: "Ocean Pure",
+      heroTide: "+4.4m",
+      heroTideLabel: "High Surge",
+      day: {
+        temp: "09",
+        cond: "ENGLISH BAY GALE",
+        range: "H: 11° · L: 7°",
+        hum: "78%",
+        wind: "42k WSW",
+        aqi: "08 CLR",
+        tag: "thorvg_salish_gale.path",
+        particles: `
+          <!-- Gentle breeze vectors instead of frantic gusts (6s-8s, subtle lines) -->
+          <g class="anim-gale-streak">
+            <line x1="20" y1="45" x2="55" y2="65" stroke="#ffe04a" stroke-width="0.9" stroke-linecap="round" opacity="0.45"/>
+            <line x1="75" y1="85" x2="120" y2="108" stroke="#00ffcc" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+            <line x1="30" y1="125" x2="70" y2="148" stroke="#c0fff4" stroke-width="0.85" stroke-linecap="round" opacity="0.35"/>
+          </g>
+        `
+      },
+      night: {
+        temp: "05",
+        cond: "STRAIT SQUALL",
+        range: "H: 08° · L: 4°",
+        hum: "84%",
+        wind: "38k W",
+        baro: "998hPa",
+        tag: "thorvg_gale_sumi.path",
+        particles: `
+          <!-- Calmed Night Pacific Breeze -->
+          <g class="anim-gale-streak">
+            <line x1="25" y1="50" x2="60" y2="72" stroke="#ff2d78" stroke-width="0.8" stroke-linecap="round" opacity="0.45"/>
+            <line x1="85" y1="95" x2="130" y2="118" stroke="#00ffcc" stroke-width="0.85" stroke-linecap="round" opacity="0.45"/>
+          </g>
+        `
+      }
+    },
+    aurora: {
+      id: "aurora",
+      heroIcon: "nights_stay",
+      heroAqi: "06",
+      heroAqiLabel: "Crystal",
+      heroTide: "+3.2m",
+      heroTideLabel: "Slack",
+      day: {
+        temp: "13",
+        cond: "COASTAL SUNBREAK",
+        range: "H: 16° · L: 9°",
+        hum: "65%",
+        wind: "10k NW",
+        aqi: "06 CLR",
+        tag: "thorvg_sunbreak.path",
+        particles: `
+          <!-- Calm Golden Sunbreak Shimmers -->
+          <g>
+            <circle cx="50" cy="50" r="1.4" fill="#ffe04a" opacity="0.6" class="anim-star"/>
+            <circle cx="120" cy="70" r="1.2" fill="#00ffcc" opacity="0.55" class="anim-star" style="animation-delay: 2.2s;"/>
+            <circle cx="70" cy="115" r="1.3" fill="#ffe04a" opacity="0.5" class="anim-star" style="animation-delay: 4.0s;"/>
+          </g>
+        `
+      },
+      night: {
+        temp: "04",
+        cond: "EMERALD AURORA",
+        range: "H: 09° · L: 2°",
+        hum: "72%",
+        wind: "06k NNE",
+        baro: "1024hPa",
+        tag: "thorvg_cascadia_aurora.path",
+        particles: `
+          <!-- Relaxed Geomagnetic Aurora Starlight -->
+          <g>
+            <circle cx="45" cy="40" r="1.5" fill="#00ffcc" opacity="0.65" class="anim-star"/>
+            <circle cx="105" cy="35" r="1.6" fill="#00ffcc" opacity="0.6" class="anim-star" style="animation-delay: 1.8s;"/>
+            <circle cx="135" cy="65" r="1.4" fill="#ff2d78" opacity="0.55" class="anim-star" style="animation-delay: 3.5s;"/>
+            <circle cx="70" cy="90" r="1.3" fill="#00ffcc" opacity="0.5" class="anim-star" style="animation-delay: 2.5s;"/>
+          </g>
+        `
+      }
+    },
+    flurry: {
+      id: "flurry",
+      heroIcon: "ac_unit",
+      heroAqi: "03",
+      heroAqiLabel: "Alpine Zero",
+      heroTide: "+2.9m",
+      heroTideLabel: "Ebb",
+      day: {
+        temp: "-1",
+        cond: "ALPINE POWDER",
+        range: "H: 01° · L: -5°",
+        hum: "54%",
+        wind: "22k NE",
+        aqi: "03 CLR",
+        tag: "thorvg_whistler_day.path",
+        particles: `
+          <!-- Calmed, slow drifting snowflakes (7-10s) -->
+          <g class="anim-snow-flake" stroke="#c0fff4" stroke-width="0.75" opacity="0.65">
+            <line x1="45" y1="40" x2="45" y2="48"/><line x1="41" y1="44" x2="49" y2="44"/>
+            <line x1="42" y1="41" x2="48" y2="47"/>
+          </g>
+          <g class="anim-snow-flake" style="animation-delay: 3.5s; animation-duration: 9.5s;" stroke="#00ffcc" stroke-width="0.75" opacity="0.6">
+            <line x1="115" y1="60" x2="115" y2="68"/><line x1="111" y1="64" x2="119" y2="64"/>
+          </g>
+          <g class="anim-snow-flake" style="animation-delay: 5.5s; animation-duration: 8.8s;" stroke="#c0fff4" stroke-width="0.7" opacity="0.55">
+            <line x1="75" y1="120" x2="75" y2="128"/><line x1="71" y1="124" x2="79" y2="124"/>
+          </g>
+        `
+      },
+      night: {
+        temp: "-4",
+        cond: "SUB-ZERO FROST",
+        range: "H: -2° · L: -8°",
+        hum: "60%",
+        wind: "18k N",
+        baro: "1031hPa",
+        tag: "thorvg_whistler_sumi.path",
+        particles: `
+          <!-- Calmed Nocturne Frost Crystals with Soft Glint -->
+          <g class="anim-snow-flake" stroke="#00ffcc" stroke-width="0.75" opacity="0.65">
+            <line x1="50" y1="55" x2="50" y2="63"/><line x1="46" y1="59" x2="54" y2="59"/>
+          </g>
+          <g class="anim-snow-flake" style="animation-delay: 3.8s; animation-duration: 9.8s;" stroke="#ff2d78" stroke-width="0.7" opacity="0.55">
+            <line x1="105" y1="80" x2="105" y2="88"/><line x1="101" y1="84" x2="109" y2="84"/>
+          </g>
+        `
+      }
+    }
+  };
+
+  let activePresetKey = "mist";
+  let activeHardwareMode = "day"; // "day" or "night"
+
+  // Select Cascadia Weather Preset with Soft, Calmed Visual Transitions
+  function selectVancouverPreset(key) {
+    const data = VANC_DATA[key];
+    if (!data) return;
+    activePresetKey = key;
+
+    // Update Banner telemetry
+    document.getElementById('hero-weather-icon').textContent = data.heroIcon;
+    document.getElementById('hero-aqi').innerHTML = `${data.heroAqi} <span class="text-secondary text-[9px]">${data.heroAqiLabel}</span>`;
+    document.getElementById('hero-tide').innerHTML = `${data.heroTide} <span class="text-primary-fixed-dim text-[9px]">${data.heroTideLabel}</span>`;
+
+    // Softer transition on day screen
+    const dayScreen = document.getElementById('screen-day');
+    dayScreen.style.opacity = '0.75';
+    setTimeout(() => {
+      document.getElementById('day-temp').textContent = data.day.temp;
+      document.getElementById('day-cond-title').textContent = data.day.cond;
+      document.getElementById('day-range').textContent = data.day.range;
+      document.getElementById('day-hum').textContent = data.day.hum;
+      document.getElementById('day-wind').textContent = data.day.wind;
+      document.getElementById('day-aqi').textContent = data.day.aqi;
+      document.getElementById('day-tag').textContent = data.day.tag;
+      document.getElementById('vanc-day-weather-particles').innerHTML = data.day.particles;
+      dayScreen.style.opacity = '1';
+    }, 250);
+
+    // Softer transition on night screen
+    const nightScreen = document.getElementById('screen-night');
+    nightScreen.style.opacity = '0.75';
+    setTimeout(() => {
+      document.getElementById('night-temp').textContent = data.night.temp;
+      document.getElementById('night-cond-title').textContent = data.night.cond;
+      document.getElementById('night-range').textContent = data.night.range;
+      document.getElementById('night-hum').textContent = data.night.hum;
+      document.getElementById('night-wind').textContent = data.night.wind;
+      document.getElementById('night-baro').textContent = data.night.baro;
+      document.getElementById('night-tag').textContent = data.night.tag;
+      document.getElementById('vanc-night-weather-particles').innerHTML = data.night.particles;
+      nightScreen.style.opacity = '1';
+    }, 250);
+
+    // Highlight Preset Cards
+    document.querySelectorAll('.vanc-preset-card').forEach(card => {
+      card.classList.remove('bg-surface-container-high', 'border-secondary/60', 'border-primary/60', 'border-tertiary/60', 'shadow-[0_0_12px_rgba(0,255,204,0.25)]');
+      card.classList.add('bg-surface-container-low', 'border-transparent');
+    });
+
+    const activeCard = document.getElementById(`vanc-preset-${key}`);
+    if (activeCard) {
+      activeCard.classList.remove('bg-surface-container-low', 'border-transparent');
+      activeCard.classList.add('bg-surface-container-high', 'border-secondary/60', 'shadow-[0_0_12px_rgba(0,255,204,0.25)]');
+    }
+  }
+
+  // Interactive Hardware PWM Backlight Simulation with Gentle Transitions
+  function setBacklightHardwareMode(mode) {
+    activeHardwareMode = mode;
+    const dayBtn = document.getElementById('mode-day-btn');
+    const nightBtn = document.getElementById('mode-night-btn');
+    const screenDay = document.getElementById('screen-day');
+    const screenNight = document.getElementById('screen-night');
+    const bezelDay = document.getElementById('bezel-day');
+    const bezelNight = document.getElementById('bezel-night');
+    const pwrVal = document.getElementById('stat-power-val');
+    const pwrLabel = document.getElementById('stat-power-label');
+    const pwrBar = document.getElementById('stat-power-bar');
+    const pwrSub = document.getElementById('stat-power-sub');
+
+    if (mode === 'day') {
+      // Button states
+      dayBtn.className = "flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-headline font-bold bg-secondary/20 text-secondary border border-secondary/40 transition-all duration-300";
+      nightBtn.className = "flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-headline font-bold text-on-surface-variant hover:text-on-surface transition-all duration-300";
+      
+      // Screen 1: Gentle Daylight Brightness & Glow
+      screenDay.style.filter = "brightness(1.03) contrast(1.01)";
+      screenDay.style.boxShadow = "0 0 20px rgba(0,255,204,0.25)";
+      bezelDay.style.borderColor = "rgba(0, 255, 204, 0.5)";
+      bezelDay.style.boxShadow = "0 0 16px rgba(0,255,204,0.2)";
+
+      // Screen 2: Secondary Focus
+      screenNight.style.filter = "brightness(0.88)";
+      screenNight.style.boxShadow = "0 0 8px rgba(255,45,120,0.08)";
+      bezelNight.style.borderColor = "rgba(255, 45, 120, 0.2)";
+      bezelNight.style.boxShadow = "none";
+
+      // Benchmarks
+      pwrVal.textContent = "560";
+      pwrLabel.textContent = "mW (Day 100% PWM)";
+      pwrBar.style.width = "100%";
+      pwrBar.className = "h-full bg-secondary transition-all duration-700";
+      pwrSub.innerHTML = "100% PWM: 112mA <span class='text-secondary font-bold'>Full Sunlight</span>";
+
+      showToast("Hardware PWM: 100% (112 mA · 560 mW) Activated");
+    } else {
+      // Button states
+      nightBtn.className = "flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-headline font-bold bg-primary/20 text-primary-fixed-dim border border-primary/40 transition-all duration-300";
+      dayBtn.className = "flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-headline font-bold text-on-surface-variant hover:text-on-surface transition-all duration-300";
+
+      // Screen 1: Dimmed
+      screenDay.style.filter = "brightness(0.78) contrast(0.96)";
+      screenDay.style.boxShadow = "0 0 6px rgba(0,255,204,0.08)";
+      bezelDay.style.borderColor = "rgba(0, 255, 204, 0.2)";
+      bezelDay.style.boxShadow = "none";
+
+      // Screen 2: Softer Nocturne Glow
+      screenNight.style.filter = "brightness(1.02) contrast(1.05)";
+      screenNight.style.boxShadow = "0 0 20px rgba(255,45,120,0.22)";
+      bezelNight.style.borderColor = "rgba(255, 45, 120, 0.5)";
+      bezelNight.style.boxShadow = "0 0 16px rgba(255,45,120,0.2)";
+
+      // Benchmarks
+      pwrVal.textContent = "255";
+      pwrLabel.textContent = "mW (Night 35% PWM)";
+      pwrBar.style.width = "45%";
+      pwrBar.className = "h-full bg-primary transition-all duration-700";
+      pwrSub.innerHTML = "35% PWM: 51mA <span class='text-primary font-bold'>-54% Power Saved</span>";
+
+      showToast("Hardware PWM: 35% (51 mA · 255 mW) Activated");
+    }
+  }
+
+  // Global Toast Dispatcher
+  function showToast(msg) {
+    const toast = document.getElementById('global-toast');
+    const toastText = document.getElementById('toast-text');
+    toastText.textContent = msg;
+    toast.classList.remove('opacity-0', '-translate-y-2');
+    toast.classList.add('opacity-100', 'translate-y-0');
+    setTimeout(() => {
+      toast.classList.remove('opacity-100', 'translate-y-0');
+      toast.classList.add('opacity-0', '-translate-y-2');
+    }, 2800);
+  }
+
+  // Copy Firmware to Clipboard
+  function copyVancouverFirmware() {
+    const code = document.getElementById('vanc-code-block').innerText;
+    navigator.clipboard.writeText(code).then(() => {
+      const icon = document.getElementById('copy-icon');
+      const label = document.getElementById('copy-label');
+      icon.textContent = 'done';
+      label.textContent = 'COPIED!';
+      label.classList.add('text-secondary');
+      showToast("Blueprint Copied to Clipboard!");
+      setTimeout(() => {
+        icon.textContent = 'content_copy';
+        label.textContent = 'Copy Blueprint';
+        label.classList.remove('text-secondary');
+      }, 2500);
+    }).catch(err => {
+      showToast("Failed to copy blueprint to clipboard");
+    });
+  }
+
+  // Calmed FPS Telemetry Counter (Infrequent slow update)
+  setInterval(() => {
+    const fpsElem = document.getElementById('fps-counter');
+    if (fpsElem) {
+      const val = 30 + Math.floor(Math.random() * 2);
+      fpsElem.textContent = `${val} FPS`;
+    }
+  }, 4000);
+
+  // Initialize Default State
+  document.addEventListener('DOMContentLoaded', () => {
+    selectVancouverPreset('mist');
+  });
+</script>
+</body></html>

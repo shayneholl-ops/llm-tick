@@ -4,7 +4,7 @@
 #include <ESPmDNS.h>
 #include <Adafruit_NeoPixel.h>
 #include "board.h"
-#include "cyberpunk.h"
+#include "wxscene.h"
 #include "tick.h"
 
 LGFX lcd;
@@ -14,12 +14,12 @@ LGFX_Sprite* uiSpr = &spr0;   // UI scene draws through this (into the active bu
 uint16_t*    bufs[2]    = { nullptr, nullptr };
 Adafruit_NeoPixel led(1, PIN_RGB, NEO_GRB + NEO_KHZ800);
 
-// Scenes: 0 = usage, 1 = weather standby, 2 = cyberpunk ambient (5 procedural
-// sub-scenes that auto-cycle inside it — see cyberpunk.cpp). The serial PRESS
-// line cycles them with one counter.
+// Scenes: 0 = usage, 1 = weather standby. (The cyberpunk ambient scene 2 was
+// removed 2026-09-22 at the user's request — see HANDOFF item 7.) The serial
+// PRESS line cycles them with one counter.
 volatile int   g_scene = 0;
-int            sceneCount() { return 3; }
-const char*    sceneName(int s) { return s == 0 ? "usage" : (s == 1 ? "weather" : "cyberpunk"); }
+int            sceneCount() { return 2; }
+const char*    sceneName(int s) { return s == 0 ? "usage" : "weather"; }
 
 volatile uint32_t g_renderUs = 0;
 
@@ -36,6 +36,8 @@ QueueHandle_t freeQ, readyQ;   // carry buffer indices (0/1) between the two cor
 //   PAT 0..6     0=normal scenes; 1=mid gray; 2=white top 24 rows / black rest;
 //                3=black top 24 / gray rest; 4=all black; 5=all white;
 //                6=black top 24 + black rows 150-173 / gray rest (position control)
+//   PAT 8        camera calibration bars: 8 x 40-row bands replaying the exact
+//                panel values the weather scene writes (see fillPattern)
 //   ST           print diagnostic state
 volatile int g_diagLed = 1;
 volatile int g_diagBlDuty = 100;   // 0 = off, 100 = full
@@ -43,12 +45,38 @@ volatile int g_diagPat = 0;
 volatile int g_wbField = 0;        // 0 = normal; 1..6 = raw WB calibration fields,
                                   // 7 = split AWB anchor (white | corrected dark canvas)
 
+volatile bool g_wxNightForce = false;   // WXN diagnostic (see wxscene/ui.cpp)
+
 // WB calibration fields (logical 565; byte-swapped at write time, like the
 // effect palettes): white, 50% gray, 25% gray, R, G, B primaries.
 static const uint16_t wbFields[7] = { 0, 0xFFFF, 0x7BEF, 0x39E7, 0xF800, 0x07E0, 0x001F };
 
 static const uint16_t kPatGray = 0x7BEF;
 static void fillPattern(uint16_t* buf, int w, int h, int pat) {
+  if (pat == 8) {
+    // Camera calibration bars (2026-09-22): each 40-row band replays the EXACT
+    // panel value the weather scene writes for a named element — raw logical
+    // 565 through wb565() then the byte swap, same path as wxscene.cpp. Band
+    // edges give the glass mapping; the readings give the camera's response,
+    // so a scene capture can be compared against intent instead of guessed at.
+    static const uint16_t bar[8] = {
+      0x0000,   // 1 black
+      0x0021,   // 2 night sky, top row      (#050811)
+      0x00C3,   // 3 night sky, near horizon (#0d1e2e)
+      0x00A4,   // 4 night water, top        (#071520)
+      0x0000,   // 5 night water, bottom     (#03070d -> black)
+      0x18C3,   // 6 the old flat canvas     (#181818)
+      0x4208,   // 7 mid gray
+      0xFFFF    // 8 white
+    };
+    for (int y = 0; y < h; y++) {
+      uint16_t v = wb565(bar[(y / 40) % 8]);
+      uint16_t c = (uint16_t)((v >> 8) | (v << 8));
+      uint16_t* row = buf + (size_t)y * w;
+      for (int x = 0; x < w; x++) row[x] = c;
+    }
+    return;
+  }
   uint16_t topC = kPatGray, restC = kPatGray, midC = kPatGray;
   switch (pat) {
     case 1:  topC = restC = kPatGray; break;
@@ -86,8 +114,7 @@ static void blTask(void*) {
 void showLed(int s) {
   uint32_t c;
   if (s == 0)      c = led.Color(0, 24, 24);   // usage: blue
-  else if (s == 1) c = led.Color(0, 20, 10);   // standby: soft green
-  else             c = led.Color(0, 22, 16);   // cyberpunk: cyan
+  else             c = led.Color(0, 20, 10);   // weather standby: soft green
   led.setPixelColor(0, c);
   led.show();
 }
@@ -122,8 +149,6 @@ void renderTask(void*) {
           for (int x = 0; x < SCREEN_W; x++) row[x] = f;
         }
       }
-    } else if (s == 2) {
-      cyberFrame(bufs[idx], SCREEN_W, SCREEN_H);
     } else {
       renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     }
@@ -200,7 +225,7 @@ void checkSerialCmd() {
       }
       else if (n >= 4 && strncmp(buf, "PAT", 3) == 0) {
         int v = atoi(buf + 4);
-        g_diagPat = (v >= 0 && v <= 6) ? v : 0;
+        g_diagPat = (v >= 0 && v <= 8) ? v : 0;
         Serial.printf("[diag] PAT %d\n", g_diagPat);
       }
       else if (n >= 4 && strncmp(buf, "WB", 2) == 0) {
@@ -208,10 +233,14 @@ void checkSerialCmd() {
         g_wbField = (v >= 0 && v <= 7) ? v : 0;
         Serial.printf("[diag] WB %d\n", g_wbField);
       }
+      else if (n >= 3 && strncmp(buf, "WXN", 3) == 0) {
+        g_wxNightForce = !g_wxNightForce;
+        Serial.printf("[diag] WXN force-night=%d\n", (int)g_wxNightForce);
+      }
       else if (n >= 2 && strncmp(buf, "ST", 2) == 0) {
-        Serial.printf("[diag] scene=%d(%s) blDuty=%d led=%d pat=%d render=%lums\n",
+        Serial.printf("[diag] scene=%d(%s) blDuty=%d led=%d pat=%d wxn=%d render=%lums\n",
                       g_scene, sceneName(g_scene), g_diagBlDuty, g_diagLed, g_diagPat,
-                      (unsigned long)(g_renderUs / 1000));
+                      (int)g_wxNightForce, (unsigned long)(g_renderUs / 1000));
       }
       n = 0;
     } else if (n < (int)sizeof(buf) - 1) {
@@ -239,7 +268,7 @@ void setup() {
   led.begin();
 
   uiWbInit();          // white-balance the UI palette for this backlight (before frame 1)
-  cyberInit();         // cyberpunk scene palette + sub-scene state
+  wxSceneInit();       // weather background: palette + aurora envelope table
 
   pinMode(PIN_BTN, INPUT_PULLUP);
 
@@ -271,7 +300,7 @@ void setup() {
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
   showLed(g_scene);
-  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather <-> cyberpunk");
+  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather");
 }
 
 void loop() {

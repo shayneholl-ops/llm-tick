@@ -35,6 +35,7 @@ struct Usage {
 extern Usage g_u;
 
 extern volatile uint32_t g_lastSceneChange;   // set by checkButton / auto-switch
+extern volatile bool g_wxNightForce;          // WXN diagnostic: force the night scene
 
 // ── Backlight white balance ───────────────────────────────────────────────────
 // This unit's backlight is ONE cool-cast (blue/violet-rich) LED; no white

@@ -5,6 +5,7 @@
 //  which is never pushed — that was the black-screen bug.)
 #include "tick.h"
 #include "secrets.h"
+#include "wxscene.h"
 #include <time.h>
 
 // The active UI sprite (buffer bound to the current frame) — all draws target it.
@@ -241,68 +242,20 @@ static int lum565(uint16_t c) {
   int b = (c & 31) << 3 | (c & 31) >> 2;
   return (r + g + b) / 3;
 }
-// Move a 0..N channel 1/10 of the way to its target (rounded, always at least
-// one step, never overshoots) so the approach never stalls and never jumps.
-static int near10(int a, int b) {
-  if (a == b) return a;
-  int d = b - a;
-  int step = (d > 0) ? (d + 9) / 10 : (d - 9) / 10;
-  return a + step;
-}
-// Close 1/10 of the remaining distance to `tgt` per call (once per UI frame)
-// and quantize back to 565 — ~1 s of smooth easing at the render rate.
-static uint16_t stepToward565(uint16_t cur, uint16_t tgt) {
-  // Channels stay in NATIVE 5/6/5 space. Expanding them to 8-bit and packing
-  // the result back with <<11/<<5 (this function's original form, and mix565/
-  // scale565 below) stuffs an 8-bit value into a 5-bit field: every eased
-  // colour came out ~8x too bright and hue-shifted, which is what painted the
-  // weather field magenta/red instead of the tuned dark tint (2026-09-21).
-  int r0 = (cur >> 11) & 31, g0 = (cur >> 5) & 63, b0 = cur & 31;
-  int r1 = (tgt >> 11) & 31, g1 = (tgt >> 5) & 63, b1 = tgt & 31;
-  int r = near10(r0, r1), g = near10(g0, g1), b = near10(b0, b1);
-  return (uint16_t)((r << 11) | (g << 5) | b);
-}
-static uint16_t wxBgTarget(const WeatherData& d) {
-  if (!d.valid) return wb565(0x18C3);                  // #181818 base canvas
-  int code = d.condition_code;
-  if (code < 1000)  return d.is_day ? wb565(0x20E2) : wb565(0x18C3);  // clear: warm / neutral
-  if (code < 2000)  return d.is_day ? wb565(0x18E3) : wb565(0x10A2);  // cloud: neutral gray
-  if (code < 4000)  return d.is_day ? wb565(0x18EC) : wb565(0x1083);  // rain: cool blue
-  return d.is_day ? wb565(0x2125) : wb565(0x18E5);        // snow: cool, lighter
-}
-// Blend `a` toward `b` by f1024 (0..1024) per 565 channel — the gradient mixer.
-static uint16_t mix565(uint16_t a, uint16_t b, int f1024) {
-  int ar = (a >> 11) & 31, ag = (a >> 5) & 63, ab = a & 31;
-  int br = (b >> 11) & 31, bg = (b >> 5) & 63, bb = b & 31;
-  // Native 5/6/5 space (see stepToward565), and the shift applies to the DELTA
-  // only — `+` binds tighter than `>>`, so the unparenthesised form shifted the
-  // whole sum and wrapped channels into bright garbage (2026-09-21 white-screen
-  // bug). Both mistakes together produced the "rainbow field" capture.
-  int r  = ar + (((br - ar) * f1024) >> 10);
-  int g  = ag + (((bg - ag) * f1024) >> 10);
-  int bl = ab + (((bb - ab) * f1024) >> 10);
-  return (uint16_t)((r << 11) | (g << 5) | bl);
-}
-// Scale a 565 color toward black by f1000 (0..1000): derives the darker bottom
-// stop of the weather gradient from the tuned top stop (WB-safe — both are
-// multiplicative, so the backlight balance is preserved).
-static uint16_t scale565(uint16_t c, int f1000) {
-  int r = ((c >> 11) & 31) * f1000 / 1000;
-  int g = ((c >> 5) & 63) * f1000 / 1000;
-  int b = (c & 31) * f1000 / 1000;
-  return (uint16_t)((r << 11) | (g << 5) | b);
-}
-// The weather background is a full-height two-stop vertical gradient
-// (2026-09-21): wxBgTarget() is the TOP color — per-condition x day/night
-// (standby: base canvas) — deepening to a static ~55%-luminance bottom stop.
-// It runs edge to edge with no uniform plateau: an earlier 60-row flat top
-// (the old meander guard) put a hard colour band across the glass top sixth,
-// because the *plateau edge* was the artifact, not the ramp.
-// Both stops ease 1/10 per frame only while a condition changes (~1 s); the
-// field itself is never re-animated per frame. All targets stay far below the
-// lum-128 flip, so type is always the light set.
-static uint16_t g_wxTop = COL_BG;   // current top stop (possibly mid-transition)
-static uint16_t g_wxBot = COL_BG;   // current bottom stop (possibly mid-transition)
+// ── Weather background ──────────────────────────────────────────────────────
+// The standby background is the animated "Cascadia" scene in wxscene.cpp — a
+// day coast (sun, mist, the Lions, conifers, sea, bridge) and a night aurora
+// nocturne — ported from the in-repo design export
+// stitch_animated_lvgl_weather_backgrounds/. It replaces the two-stop gradient
+// that used to live here (wxBgTarget/mix565/scale565, deleted 2026-09-22).
+//
+// Two lessons from that code still bind, and wxscene.cpp follows both:
+//   * all channel maths stays in NATIVE 5/6/5 space — widening to 8-bit and
+//     repacking with <<11/<<5 painted every eased colour ~8x too bright (the
+//     2026-09-21 "rainbow field" capture);
+//   * a shift inside a mix must apply to the DELTA only — `+` binds tighter
+//     than `>>`, so shifting the whole sum wrapped channels into garbage.
+
 
 // ── Weather condition icon — procedural, animated ───────────────────────────
 // No image assets: every icon is drawn from primitives, so it costs no flash and
@@ -311,7 +264,7 @@ static uint16_t g_wxBot = COL_BG;   // current bottom stop (possibly mid-transit
 // details/halo/streaks; the red accent stays on the clock alone. Everything
 // lives inside the icon box (plus a few px of falling
 // rain/snow) so display rows 0-59 stay pure background (top-band meander guard).
-enum WxFam { WX_SUN, WX_MOON, WX_PARTLY_D, WX_PARTLY_N, WX_CLOUD, WX_RAIN, WX_SNOW, WX_STORM, WX_FOG };
+// (WxFam itself lives in wxscene.h — the icon and the background scene share it.)
 
 static WxFam wxFamily(int code, bool day) {
   if (code == 1000) return day ? WX_SUN : WX_MOON;                       // clear
@@ -411,47 +364,25 @@ static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
 
 static void renderWeather(uint16_t* buf, int w, int h) {
   const WeatherData& d = g_wxData;
-  uint16_t topTgt = wxBgTarget(d);
-  // The bottom stop is STATIC per condition (calm canvas). The earlier per-frame
-  // ~40 s "breath" was pulled on a MISDIAGNOSIS — that capture's stripes were the
-  // 8-bit-into-5-bit packing bug in stepToward565/mix565/scale565, not the motion.
-  // Static is kept because the design reads as a still canvas and per-frame
-  // full-field writes buy nothing.
-  uint16_t botTgt = scale565(topTgt, 550);
-  if (g_wxTop != topTgt) g_wxTop = stepToward565(g_wxTop, topTgt);
-  if (g_wxBot != botTgt) g_wxBot = stepToward565(g_wxBot, botTgt);
-  // Full-height background: rows 0..h-1, one direct byte-swapped path.
-  // The earlier shape kept rows 0-59 as a uniform plateau (the old meander
-  // guard) and started the ramp at 60; on-glass that read as a hard colour band
-  // across the top sixth — the plateau edge was the artifact, not the ramp (a
-  // flat control field drifts smoothly across the same rows). A smooth ramp has
-  // no edge for the top-band quirk to catch, so the guard is not needed here.
-  {
-    uint16_t* row = buf;
-    for (int y = 0; y < h; y++, row += w) {
-      uint16_t c = mix565(g_wxTop, g_wxBot, y * 1024 / (h - 1));
-      // Raw writes into the sprite need the byte swap (LGFX covers fillRect and
-      // text, raw writes do not — same convention as the WB fields). Verified
-      // on-glass with alternating 40-row representation bands: swapped rows
-      // matched the LGFX-filled reference, unswapped rows came out magenta.
-      c = (uint16_t)((c >> 8) | (c << 8));
-      for (int x = 0; x < w; x++) row[x] = c;
-    }
-  }
+  // Day/night comes from the reading's own is_day, unless the WXN serial
+  // diagnostic is forcing the night scene for a camera check. The same `day`
+  // drives the condition icon, so a forced preview flips sun -> moon too.
+  bool day = d.is_day && !g_wxNightForce;
+  WxFam fam = wxFamily(d.condition_code, day);
+  wxSceneRender(buf, w, h, (int)fam, day, d.valid);
   // Type: white ink, gray body, muted captions, and the one scarce red accent
-  // on the clock. The
-  // luminance flip is kept as a safety net only — every palette entry is
-  // dark, so the light set is what actually renders. Polarity is judged on
-  // the gradient's midpoint (the text zone).
-  bool bright = lum565(mix565(g_wxTop, g_wxBot, 512)) > 128;
+  // on the clock. The luminance flip is kept as a safety net only — every
+  // palette entry in the scene is dark, so the light set is what actually
+  // renders. Polarity is judged on the scene colour at the text zone.
+  bool bright = lum565(wxRowColor(h / 2)) > 128;
   uint16_t numCol  = bright ? wb565(0x0841) : COL_INK;    // big temperature
   uint16_t subCol  = bright ? wb565(0x30C6) : COL_BODY;   // small text
   uint16_t muteCol = bright ? wb565(0x30E6) : COL_MUTED;  // captions / footer
   uint16_t clkCol  = bright ? wb565(0x0040) : COL_ROSSO;  // the one accent
-  // Background color at a given row — text clips to the local gradient color.
-  auto bgAt = [&](int y) -> uint16_t {
-    return mix565(g_wxTop, g_wxBot, y * 1024 / (h - 1));
-  };
+  // Text clips to the scene colour actually rendered at that row (sampled back
+  // out of the framebuffer by wxscene.cpp), so the knock-out always lands on
+  // whatever is behind it — sky, mist, mountain, or water.
+  auto bgAt = [&](int y) -> uint16_t { return wxRowColor(y); };
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
     ui.setTextColor(numCol, bgAt(150));
@@ -478,7 +409,7 @@ static void renderWeather(uint16_t* buf, int w, int h) {
     int isz = 48, ix = 116;
     if (tempEnd + 6 > ix) { isz = 40; ix = w - 8 - isz; }
     if (tempEnd + 4 > ix) { isz = 32; ix = w - 6 - isz; }
-    drawWxIcon(ix, 62, isz, wxFamily(d.condition_code, d.is_day), numCol, subCol, muteCol, bgAt(62 + isz / 2));
+    drawWxIcon(ix, 62, isz, fam, numCol, subCol, muteCol, bgAt(62 + isz / 2));
   }
   // Caption style: uppercase (the bitmap fonts have no tracking).
   char cond[19];
