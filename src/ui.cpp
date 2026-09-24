@@ -43,6 +43,27 @@ void uiWbInit() {
   MODEL_ACCENTS[2] = COL_CYAN;   MODEL_ACCENTS[3] = COL_GREEN;
 }
 
+// ── Shared animated background (2026-09-24 unification) ─────────────────────
+// The user asked for the weather background on the LLM usage page too, so both
+// scenes read as one surface: the same Cascadia scene (day coast / night
+// aurora, driven by the one weather reading), each scene's UI knocked out
+// against the local scene colour of its own rows (bgAt). wxSceneRender is
+// stateless — every animation phase derives from millis() — so the background
+// is frame-identical on both scenes and a PRESS switch changes only the
+// overlay, never the scene behind it. No valid reading -> flat standby canvas
+// (the old look).
+static uint16_t bgAt(int y) { return wxRowColor(y); }
+// Half-brightness of a scene row — the 1-px header rule rides the local colour.
+static uint16_t dimRow(uint16_t c) {
+  return (uint16_t)((((c >> 11) & 31) << 10) | ((((c >> 5) & 63) >> 1) << 5) | ((c & 31) >> 1));
+}
+static WxFam wxFamily(int code, bool day);   // defined below, shared with the icon
+static void drawSharedBg(uint16_t* buf, int w, int h) {
+  bool day = g_wxData.valid && g_wxData.is_day && !g_wxNightForce;
+  int fam = g_wxData.valid ? (int)wxFamily(g_wxData.condition_code, day) : (int)WX_SUN;
+  wxSceneRender(buf, w, h, fam, day, g_wxData.valid);
+}
+
 const int BARS_PER_PAGE = 3;
 
 static uint16_t barColor(int pct, uint16_t accent, bool warn) {
@@ -61,11 +82,11 @@ static void drawBar(int y, const char* label, int pct, uint16_t accent,
                     const char* footer, bool warn = true, const char* value = nullptr) {
   int barX = 14, barW = 144, barH = 12, w = SCREEN_W;
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(COL_TEXT, bgAt(y));
   ui.setCursor(barX, y);
   ui.print(label);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BRIGHT, COL_BG);
+  ui.setTextColor(COL_BRIGHT, bgAt(y - 2));
   char p[12];
   if (value && *value) snprintf(p, sizeof(p), "%s", value);
   else snprintf(p, sizeof(p), "%d%%", pct);
@@ -84,7 +105,7 @@ static void drawBar(int y, const char* label, int pct, uint16_t accent,
   if (fillW > 0) ui.fillRoundRect(barX, barY, fillW, barH, 3, barColor(pct, accent, warn));
   if (footer && *footer) {
     ui.setFont(&fonts::Font0);
-    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setTextColor(COL_TEXT, bgAt(barY + 17));
     ui.setCursor(barX, barY + 17);
     ui.print(footer);
   }
@@ -100,14 +121,14 @@ static void drawGpuRow(int y) {
   int barX = 14, barW = 144, barH = 12;
   const bool ok = g_u.gpuOk && g_u.gpuLoadPct >= 0;
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(COL_TEXT, bgAt(y));
   ui.setCursor(barX, y);
   ui.print("GPU");
   char v[16];
   if (ok) snprintf(v, sizeof(v), "%d%%", g_u.gpuLoadPct);
   else snprintf(v, sizeof(v), "--");
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BRIGHT, COL_BG);
+  ui.setTextColor(COL_BRIGHT, bgAt(y - 2));
   int avail = barX + barW + 2 - (barX + ui.textWidth("GPU", &fonts::Font2)) - 6;
   if ((int)ui.textWidth(v, &fonts::Font4) > avail) ui.setFont(&fonts::Font2);
   ui.setCursor(barX + barW + 2 - ui.textWidth(v, &fonts::Font4), y - 2);
@@ -121,12 +142,12 @@ static void drawGpuRow(int y) {
   ui.setFont(&fonts::Font0);
   ui.setCursor(barX, barY + 17);
   if (!ok) {
-    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setTextColor(COL_TEXT, bgAt(barY + 17));
     ui.print("gpu unavailable");
     return;
   }
   float t = g_u.gpuTempC;
-  ui.setTextColor(t >= 90 ? COL_RED : (t >= 80 ? COL_YELLOW : COL_TEXT), COL_BG);
+  ui.setTextColor(t >= 90 ? COL_RED : (t >= 80 ? COL_YELLOW : COL_TEXT), bgAt(barY + 17));
   if (g_u.gpuTempJunctionC > 0) ui.printf("%.0fC  hs %.0fC", t, g_u.gpuTempJunctionC);
   else ui.printf("%.0fC", t);
 }
@@ -134,7 +155,7 @@ static void drawGpuRow(int y) {
 static void statusRow(int dotY, const char* state, bool ok) {
   ui.fillCircle(24, dotY, 4, ok ? COL_GREEN : COL_RED);
   ui.setFont(&fonts::Font0);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(COL_TEXT, bgAt(dotY - 5));
   ui.setCursor(34, dotY - 5);
   ui.print(state);
   if (g_u.fetchedAgo < 60) ui.printf(" %lus", g_u.fetchedAgo);
@@ -154,18 +175,19 @@ static void statusRow(int dotY, const char* state, bool ok) {
 // field). Keep display rows 0-59 PURE BACKGROUND in the UI scenes so the
 // meander has no edges to modulate -> imperceptible. See HANDOFF.md.
 static void renderUsage(uint16_t* buf, int w, int h) {
-  ui.fillScreen(COL_BG);
+  drawSharedBg(buf, w, h);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BLUE, COL_BG);
+  ui.setTextColor(COL_BLUE, bgAt(64));
   ui.setCursor(14, 64);
   ui.print("LLM");
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, COL_BG);
+  ui.setTextColor(COL_TEXT, bgAt(66));
   ui.setCursor(14 + ui.textWidth("LLM", &fonts::Font4) + 10, 66);
   ui.print(g_u.curPage == 0 ? "Usage" : g_u.curPage == 1 ? "Tokens" : "Models");
-  ui.drawFastHLine(14, 94, w - 28, wb565(0x3186));
+  ui.drawFastHLine(14, 94, w - 28, dimRow(bgAt(94)));
 
   if (!g_u.ok) {
+    ui.setTextColor(COL_TEXT, bgAt(150));
     ui.setCursor(14, 150);
     ui.print(g_u.stale ? "stale data" : "connecting...");
   }
@@ -202,7 +224,7 @@ static void renderUsage(uint16_t* buf, int w, int h) {
     drawGpuRow(y);
   } else if (g_u.curPage == 1 && g_u.ccOk && g_u.tokModelCount > 0) {
     ui.setFont(&fonts::Font0);
-    ui.setTextColor(COL_TEXT, COL_BG);
+    ui.setTextColor(COL_TEXT, bgAt(96));
     ui.setCursor(14, 96);
     ui.printf("5h %s  $%.0f/h   wk %s", g_u.tokActive, g_u.burnHr, g_u.tokWeek);
     for (int i = 0; i < BARS_PER_PAGE && i < g_u.tokModelCount; i++) {
@@ -369,7 +391,7 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   // drives the condition icon, so a forced preview flips sun -> moon too.
   bool day = d.is_day && !g_wxNightForce;
   WxFam fam = wxFamily(d.condition_code, day);
-  wxSceneRender(buf, w, h, (int)fam, day, d.valid);
+  drawSharedBg(buf, w, h);
   // Type: white ink, gray body, muted captions, and the one scarce red accent
   // on the clock. The luminance flip is kept as a safety net only — every
   // palette entry in the scene is dark, so the light set is what actually
@@ -379,10 +401,9 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   uint16_t subCol  = bright ? wb565(0x30C6) : COL_BODY;   // small text
   uint16_t muteCol = bright ? wb565(0x30E6) : COL_MUTED;  // captions / footer
   uint16_t clkCol  = bright ? wb565(0x0040) : COL_ROSSO;  // the one accent
-  // Text clips to the scene colour actually rendered at that row (sampled back
-  // out of the framebuffer by wxscene.cpp), so the knock-out always lands on
-  // whatever is behind it — sky, mist, mountain, or water.
-  auto bgAt = [&](int y) -> uint16_t { return wxRowColor(y); };
+  // Text clips to the scene colour actually rendered at that row (bgAt —
+  // sampled back out of the framebuffer by wxscene.cpp), so the knock-out
+  // always lands on whatever is behind it — sky, mist, mountain, or water.
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
     ui.setTextColor(numCol, bgAt(150));

@@ -218,11 +218,21 @@ void tickLogic() {
     Serial.println("[tick] activity -> usage");
   }
 
-  // Weather: same 30 s anti-burst gate on the on-switch refresh (HTTPS is the
-  // heaviest RX load the driver gets); the 30-min needsUpdate cadence stays.
+  // Weather refresh. Scene 1 keeps the 30 s anti-burst gate on the on-switch
+  // fetch (HTTPS is the heaviest RX load the driver gets) plus the 1 h
+  // needsUpdate cadence. Scene 0 rides a slow cadence of its own because it
+  // now shares the same animated background (2026-09-24 unification): an
+  // active feed parks the board on the usage page indefinitely, and a
+  // scene-1-only cycle would leave that background flat/stale. 1 h when the
+  // reading is valid, 5 min retries while it is not — far under the 10/min
+  // that ever stressed the wifi RX pool.
   static unsigned long lastWxRefresh = 0;
   if (g_scene == 1 &&
       (((now - g_lastSceneChange) < 500 && now - lastWxRefresh > 30000) || g_wx.needsUpdate())) {
+    refreshWeather();
+    lastWxRefresh = now;
+  } else if (g_scene == 0 &&
+      now - lastWxRefresh > (g_wxData.valid ? 3600000 : 300000)) {
     refreshWeather();
     lastWxRefresh = now;
   }
