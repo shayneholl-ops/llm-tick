@@ -19,3 +19,6 @@ usage.jsonl
 # DSH client preset bundles the GUI drops into the working dir (not project files)
 *.dshpreset
 .preset-dl/
+
+# local working notes / handoff scratch (not project files)
+.scratch/
