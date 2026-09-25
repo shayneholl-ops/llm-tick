@@ -65,7 +65,12 @@ static const uint16_t kBase[K_N] = {
   WX_RGB(0xc0, 0xff, 0xf4), WX_RGB(0x80, 0xe5, 0xd4),
   WX_RGB(0x00, 0xff, 0xcc), WX_RGB(0xc0, 0xff, 0xf4), WX_RGB(0x00, 0xff, 0xcc),
   WX_RGB(0x05, 0x08, 0x11), WX_RGB(0x09, 0x13, 0x22), WX_RGB(0x0f, 0x22, 0x33),
-  WX_RGB(0x07, 0x15, 0x20), WX_RGB(0x03, 0x07, 0x0d),
+  // Night water (2026-09-25): lifted out of the black. At 0x071520 -> 0x03070d
+  // the ramp died to pure (0,0,0) around row 290, so the bottom fifth of the
+  // glass was an empty black band with nothing in it — the "chin" the user
+  // reported. wb565 halves the blue channel, so the values stay blue-heavy to
+  // land as a dim inlet teal rather than a grey.
+  WX_RGB(0x0c, 0x28, 0x38), WX_RGB(0x08, 0x19, 0x2a),
   WX_RGB(0x06, 0x0e, 0x18), WX_RGB(0x03, 0x08, 0x0e), WX_RGB(0x00, 0xff, 0xcc),
   WX_RGB(0xff, 0xe0, 0x4a),
   WX_RGB(0xff, 0xff, 0xff), WX_RGB(0x00, 0xff, 0xcc), WX_RGB(0xff, 0x2d, 0x78),
@@ -260,7 +265,70 @@ static inline float fadeWin(float p, float lo, float hi, float a) {
 
 // ── scene elements ──────────────────────────────────────────────────────────
 
-// The sea/water plate + its animated swell lines.
+// One swell line: the crest height undulates across the width, so the water
+// reads as water instead of a set of straight rules. (2026-09-25, user report:
+// "海浪显示成直线" — every swell used to be a single hLine at a fixed y.)
+static void swellLine(int yBase, int amp, float fr, float ph, int thick,
+                      int alpha, int colIdx) {
+  for (int x = 0; x < sW; x++) {
+    int y = yBase + (int)(amp * sinf(fr * (float)x + ph) + 0.5f);
+    int si = y - SEA_Y;
+    if (si < 0) si = 0;
+    if (si >= sSeaN) si = sSeaN - 1;
+    fillRect(x, y, 1, thick, sw(mix1024(sSeaTab[si], wl(colIdx), alpha)));
+  }
+}
+
+// A dashed vertical reflection that mixes over whatever the water already put
+// in the buffer (so it rides the swells instead of painting over them) and fades
+// with depth. Used to carry the bridge + the sun/moon light all the way down to
+// the chin.
+static void reflLine(int x, int y0, int y1, uint16_t col, int a0, int a1) {
+  int span = (y1 > y0) ? (y1 - y0) : 1;
+  for (int y = y0; y <= y1; y++) {
+    if (((y - y0) / 3) & 1) continue;              // 3 on / 3 off
+    blendPx(x, y, col, a0 + (a1 - a0) * (y - y0) / span);
+  }
+}
+
+// The broken light path the sun (day) / moon (night) leaves on the inlet: a
+// wobbly dashed column reaching the near water. Its dashes wander with the
+// swell so the bottom of the glass carries the sky's light rather than fading
+// out to nothing (2026-09-25, user report: "屏幕下巴的像素的空的").
+static void drawLightPath(int cx, bool day, uint32_t t) {
+  uint16_t col = day ? wl(K_WAVE2) : wl(K_MOON);
+  float ph = TAU_F * t / 9000.0f;
+  for (int y = 200; y <= 302; y++) {
+    if (((y - 200) / 5) & 1) continue;             // 5 on / 5 off
+    int a = 300 - (y - 200) * 2;                   // fades with distance
+    if (a <= 0) continue;
+    int x = cx + (int)(2.4f * sinf(ph + (float)y * 0.19f) + 0.5f);
+    int wd = 1 + (y - 200) / 44;                   // nearer dashes spread wider
+    for (int dx = 0; dx < wd; dx++) blendPx(x + dx, y, col, a);
+  }
+}
+
+// One swell as a wavy-EDGED BAND: fill from the crest line down to the bottom of
+// the glass. Bands are painted far-to-near, so each nearer band simply covers
+// the farther ones and the visible edges are the crest lines. This is the
+// design's "subtle horizontal banding", and because the edge is a per-x sine it
+// can never read as a ruled line. (2026-09-25, user report:
+// "海浪显示成直线" — the sea was three full-width hLines at fixed y.)
+// `tab` is the band's already-mixed colour ramp (one entry per sea row): the
+// whole inlet is ~80k pixels, so the mix has to happen per band, not per pixel.
+static uint16_t sBandTab[WXH];
+static void swellBand(int yBase, int amp, float fr, float ph, const uint16_t* tab) {
+  for (int x = 0; x < sW; x++) {
+    int y0 = yBase + (int)(amp * sinf(fr * (float)x + ph) + 0.5f);
+    if (y0 < SEA_Y) y0 = SEA_Y;
+    if (y0 >= sH) continue;
+    uint16_t* p = sBuf + (size_t)y0 * sW + x;
+    const uint16_t* tp = tab + (y0 - SEA_Y);
+    for (int y = y0; y < sH; y++) { *p = *tp++; p += sW; }
+  }
+}
+
+// The sea/water plate + its animated swells.
 static void drawWater(bool day, uint32_t t) {
   for (int i = 0; i < sSeaN; i++) {
     uint16_t c = sw(sSeaTab[i]);
@@ -269,24 +337,27 @@ static void drawWater(bool day, uint32_t t) {
   }
   // waveSurge: translateX 0 -> -6 -> 0 over 8 s
   int ox = (int)(-3.0f + 3.0f * cosf(TAU_F * t / 8000.0f));
-  if (day) {
-    const int wy[3] = { 212, 226, 244 };
-    const uint16_t wc[3] = { K_WAVE1, K_WAVE2, K_WAVE1 };
-    const int wa[3] = { 310, 260, 210 };
-    for (int i = 0; i < 3; i++) {
-      uint16_t c = sw(mix1024(sSeaTab[wy[i] - SEA_Y], wl(wc[i]), wa[i]));
-      int y = wy[i];
-      hLine(ox - 10, y, sW + 20, c);                  // drawn as a calm swell line
-      hLine(ox - 10, y + 1, 60, sw(mix1024(sSeaTab[y + 1 - SEA_Y], wl(wc[i]), wa[i] / 2)));
-    }
-  } else {
-    const int wy[3] = { 216, 234, 258 };
-    const uint16_t wc[3] = { K_WAVE1, K_STARP, K_WAVE1 };
-    const int wa[3] = { 256, 205, 185 };
-    for (int i = 0; i < 3; i++) {
-      uint16_t c = sw(mix1024(sSeaTab[wy[i] - SEA_Y], wl(wc[i]), wa[i]));
-      hLine(ox - 10, wy[i], sW + 20, c);
-    }
+  float ph = TAU_F * t / 11000.0f;
+  // Seven swells from the horizon to the chin: the pitch widens with depth
+  // (perspective) and every crest owns its own wavelength + phase, so no two
+  // line up into a rule. The last crest sits ~10 px above row 319, so the bottom
+  // edge of the glass is water. (2026-09-25, user report:
+  // "屏幕下巴的像素的空的" — rows ~290..319 used to render as pure black.)
+  const int   sy[7] = {  206,  219,  234,  251,  270,  290,  308 };
+  const int   sa[7] = {    3,    4,    5,    6,    7,    8,    9 };
+  const float sf[7] = { 0.062f, -0.048f, 0.040f, -0.055f, 0.034f, -0.043f, 0.030f };
+  const float sp[7] = { 0.0f, 1.9f, 3.4f, 0.7f, 2.6f, 4.8f, 1.2f };
+  uint16_t wave = wl(K_WAVE1);
+  for (int i = 0; i < 7; i++) {
+    // The band fill stays dark: wb565 halves the blue channel, so a cyan mix
+    // lands green and a strong mix turns the whole inlet into paint. Only the
+    // 1-px crest carries the full neon colour; the pink accent stays on the
+    // bridge's dashed reflection, where it belongs to a light source.
+    int a = (day ? 90 : 45) + i * 22;
+    for (int k = 0; k < sSeaN; k++) sBandTab[k] = sw(mix1024(sSeaTab[k], wave, a));
+    float cph = sp[i] + ph - sf[i] * (float)ox;   // -sf*ox is the surge
+    swellBand(sy[i], sa[i], sf[i], cph, sBandTab);
+    swellLine(sy[i], sa[i], sf[i], cph, i >= 4 ? 2 : 1, 300 + i * 24, K_WAVE1);
   }
 }
 
@@ -394,6 +465,10 @@ static void drawBridgeNight(uint32_t t) {
   drawLine(43, 182, 75, 176, sw(mix1024(sSkyTab[178], cy, 500)));
   dashLine(43, 198, 43, 245, sw(mix1024(sw(sBuf[(size_t)220 * sW + 43]), cy, 400)), 3, 4);
   dashLine(28, 202, 28, 230, sw(mix1024(sw(sBuf[(size_t)215 * sW + 28]), wl(K_STARP), 300)), 2, 3);
+  // ...and both reflections run on to the near water (design "PORT 02" shows
+  // them reaching the bottom of frame).
+  reflLine(43, 246, 306, cy, 300, 90);
+  reflLine(28, 232, 288, wl(K_STARP), 240, 70);
 }
 
 // ── night scene ─────────────────────────────────────────────────────────────
@@ -593,7 +668,7 @@ static void drawShimmer(uint32_t t) {
   }
 }
 
-// ── row colour sampling (text clips to the local scene colour) ──────────────
+// ── row colour sampling (legibility checks + the UI's 1-px header rule) ─────
 static uint16_t sRowCol[WXH];
 
 static void sampleRows() {
@@ -657,6 +732,7 @@ void wxSceneRender(uint16_t* buf, int w, int h, int fam, bool day, bool valid) {
     fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTMID));
     drawConifers(t);
     drawWater(true, t);
+    drawLightPath(130, true, t);      // sun path on the inlet
     drawBridgeDay();
     if (fam == WX_SUN || fam == WX_PARTLY_D) drawShimmer(t);
     if (fam == WX_RAIN || fam == WX_STORM) drawRain(t, fam == WX_STORM);
@@ -676,6 +752,7 @@ void wxSceneRender(uint16_t* buf, int w, int h, int fam, bool day, bool valid) {
     }
     fillPoly(kPineX, kPineY, 7, wp(K_PINE));
     drawWater(false, t);
+    drawLightPath(92, false, t);      // moon path on the inlet
     drawBridgeNight(t);
     if (precip && fam != WX_SNOW) drawRain(t, fam == WX_STORM);
     if (fam == WX_SNOW) drawSnow(t, false);

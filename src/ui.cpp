@@ -46,12 +46,23 @@ void uiWbInit() {
 // ── Shared animated background (2026-09-24 unification) ─────────────────────
 // The user asked for the weather background on the LLM usage page too, so both
 // scenes read as one surface: the same Cascadia scene (day coast / night
-// aurora, driven by the one weather reading), each scene's UI knocked out
-// against the local scene colour of its own rows (bgAt). wxSceneRender is
-// stateless — every animation phase derives from millis() — so the background
-// is frame-identical on both scenes and a PRESS switch changes only the
-// overlay, never the scene behind it. No valid reading -> flat standby canvas
-// (the old look).
+// aurora, driven by the one weather reading), with each scene's UI drawn
+// straight on top of it. wxSceneRender is stateless — every animation phase
+// derives from millis() — so the background is frame-identical on both scenes
+// and a PRESS switch changes only the overlay, never the scene behind it. No
+// valid reading -> flat standby canvas (the old look).
+//
+// 2026-09-25: the UI is now TRANSPARENT over that scene. Every string used to
+// be knocked out with setTextColor(ink, bgAt(row)) — but bgAt samples the scene
+// at x==2 only, while fg != bg makes LovyanGFX paint a SOLID RECTANGLE of that
+// one colour behind the whole text run. Over a scene that varies across x
+// (mist, mountain edge, water) that rectangle never matched, so every string
+// sat on a hard-edged flat block — "文字附近空白的像素没有被填满". Passing a
+// single colour (setTextColor(ink), which sets fore == back and therefore
+// suppresses the fill: lgfx_fonts.cpp `fillbg = (back != fore)`) knocks the
+// glyphs out of the scene itself. Ink is chosen for legibility separately (see
+// the luminance flip in renderWeather); the scene's brightest pixels are ~100,
+// far below the light-ink threshold, so contrast is unaffected.
 static uint16_t bgAt(int y) { return wxRowColor(y); }
 // Half-brightness of a scene row — the 1-px header rule rides the local colour.
 static uint16_t dimRow(uint16_t c) {
@@ -82,11 +93,11 @@ static void drawBar(int y, const char* label, int pct, uint16_t accent,
                     const char* footer, bool warn = true, const char* value = nullptr) {
   int barX = 14, barW = 144, barH = 12, w = SCREEN_W;
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, bgAt(y));
+  ui.setTextColor(COL_TEXT);
   ui.setCursor(barX, y);
   ui.print(label);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BRIGHT, bgAt(y - 2));
+  ui.setTextColor(COL_BRIGHT);
   char p[12];
   if (value && *value) snprintf(p, sizeof(p), "%s", value);
   else snprintf(p, sizeof(p), "%d%%", pct);
@@ -105,7 +116,7 @@ static void drawBar(int y, const char* label, int pct, uint16_t accent,
   if (fillW > 0) ui.fillRoundRect(barX, barY, fillW, barH, 3, barColor(pct, accent, warn));
   if (footer && *footer) {
     ui.setFont(&fonts::Font0);
-    ui.setTextColor(COL_TEXT, bgAt(barY + 17));
+    ui.setTextColor(COL_TEXT);
     ui.setCursor(barX, barY + 17);
     ui.print(footer);
   }
@@ -121,14 +132,14 @@ static void drawGpuRow(int y) {
   int barX = 14, barW = 144, barH = 12;
   const bool ok = g_u.gpuOk && g_u.gpuLoadPct >= 0;
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, bgAt(y));
+  ui.setTextColor(COL_TEXT);
   ui.setCursor(barX, y);
   ui.print("GPU");
   char v[16];
   if (ok) snprintf(v, sizeof(v), "%d%%", g_u.gpuLoadPct);
   else snprintf(v, sizeof(v), "--");
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BRIGHT, bgAt(y - 2));
+  ui.setTextColor(COL_BRIGHT);
   int avail = barX + barW + 2 - (barX + ui.textWidth("GPU", &fonts::Font2)) - 6;
   if ((int)ui.textWidth(v, &fonts::Font4) > avail) ui.setFont(&fonts::Font2);
   ui.setCursor(barX + barW + 2 - ui.textWidth(v, &fonts::Font4), y - 2);
@@ -142,12 +153,12 @@ static void drawGpuRow(int y) {
   ui.setFont(&fonts::Font0);
   ui.setCursor(barX, barY + 17);
   if (!ok) {
-    ui.setTextColor(COL_TEXT, bgAt(barY + 17));
+    ui.setTextColor(COL_TEXT);
     ui.print("gpu unavailable");
     return;
   }
   float t = g_u.gpuTempC;
-  ui.setTextColor(t >= 90 ? COL_RED : (t >= 80 ? COL_YELLOW : COL_TEXT), bgAt(barY + 17));
+  ui.setTextColor(t >= 90 ? COL_RED : (t >= 80 ? COL_YELLOW : COL_TEXT));
   if (g_u.gpuTempJunctionC > 0) ui.printf("%.0fC  hs %.0fC", t, g_u.gpuTempJunctionC);
   else ui.printf("%.0fC", t);
 }
@@ -155,7 +166,7 @@ static void drawGpuRow(int y) {
 static void statusRow(int dotY, const char* state, bool ok) {
   ui.fillCircle(24, dotY, 4, ok ? COL_GREEN : COL_RED);
   ui.setFont(&fonts::Font0);
-  ui.setTextColor(COL_TEXT, bgAt(dotY - 5));
+  ui.setTextColor(COL_TEXT);
   ui.setCursor(34, dotY - 5);
   ui.print(state);
   if (g_u.fetchedAgo < 60) ui.printf(" %lus", g_u.fetchedAgo);
@@ -177,17 +188,17 @@ static void statusRow(int dotY, const char* state, bool ok) {
 static void renderUsage(uint16_t* buf, int w, int h) {
   drawSharedBg(buf, w, h);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(COL_BLUE, bgAt(64));
+  ui.setTextColor(COL_BLUE);
   ui.setCursor(14, 64);
   ui.print("LLM");
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(COL_TEXT, bgAt(66));
+  ui.setTextColor(COL_TEXT);
   ui.setCursor(14 + ui.textWidth("LLM", &fonts::Font4) + 10, 66);
   ui.print(g_u.curPage == 0 ? "Usage" : g_u.curPage == 1 ? "Tokens" : "Models");
   ui.drawFastHLine(14, 94, w - 28, dimRow(bgAt(94)));
 
   if (!g_u.ok) {
-    ui.setTextColor(COL_TEXT, bgAt(150));
+    ui.setTextColor(COL_TEXT);
     ui.setCursor(14, 150);
     ui.print(g_u.stale ? "stale data" : "connecting...");
   }
@@ -224,7 +235,7 @@ static void renderUsage(uint16_t* buf, int w, int h) {
     drawGpuRow(y);
   } else if (g_u.curPage == 1 && g_u.ccOk && g_u.tokModelCount > 0) {
     ui.setFont(&fonts::Font0);
-    ui.setTextColor(COL_TEXT, bgAt(96));
+    ui.setTextColor(COL_TEXT);
     ui.setCursor(14, 96);
     ui.printf("5h %s  $%.0f/h   wk %s", g_u.tokActive, g_u.burnHr, g_u.tokWeek);
     for (int i = 0; i < BARS_PER_PAGE && i < g_u.tokModelCount; i++) {
@@ -310,8 +321,27 @@ static void wxCloud(int x, int y, int s, uint16_t col, int drift) {
   ui.fillRoundRect(x + drift + bw / 6,  base, bw * 2 / 3, s / 4, s / 12, col);
 }
 
+// A crescent drawn as a shape: the disc (cx,cy,r) with the offset disc
+// (ox,oy,orr) bitten out. The icon used to fill a full disc and then flood a
+// background colour over part of it — that flood had to be a single colour
+// while the scene behind the icon varies, so it landed as a flat block hanging
+// off the moon (2026-09-25, user report: "文字附近空白的像素没有被填满").
+static void wxCrescent(int cx, int cy, int r, int ox, int oy, int orr, uint16_t col) {
+  for (int y = cy - r; y <= cy + r; y++) {
+    if ((unsigned)y >= (unsigned)SCREEN_H) continue;
+    for (int x = cx - r; x <= cx + r; x++) {
+      if ((unsigned)x >= (unsigned)SCREEN_W) continue;
+      int dx = x - cx, dy = y - cy;
+      if (dx * dx + dy * dy > r * r) continue;
+      int ex = x - ox, ey = y - oy;
+      if (ex * ex + ey * ey <= orr * orr) continue;         // the bite
+      ui.drawPixel(x, y, col);
+    }
+  }
+}
+
 static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
-                       uint16_t body, uint16_t mute, uint16_t bg) {
+                       uint16_t body, uint16_t mute) {
   const uint32_t t = millis();
   const int cx = x + s / 2, cy = y + s / 2;
   switch (fam) {
@@ -326,8 +356,7 @@ static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
       break;
     case WX_MOON:                                      // slow halo pulse + crescent
       ui.drawCircle(cx, cy, s / 3 + 1 + (int)(1.5f * sinf(t / 950.0f)), mute);
-      ui.fillCircle(cx, cy, s / 5, ink);
-      ui.fillCircle(cx + s / 7, cy - s / 9, s / 6, bg);
+      wxCrescent(cx, cy, s / 5, cx + s / 7, cy - s / 9, s / 6, ink);
       break;
     case WX_PARTLY_D:                                  // sun behind a drifting cloud
       for (int i = 0; i < 6; i++) {
@@ -340,8 +369,7 @@ static void drawWxIcon(int x, int y, int s, WxFam fam, uint16_t ink,
       wxCloud(x, y + s / 5, s, body, (int)(1.5f * sinf(t / 700.0f)));
       break;
     case WX_PARTLY_N:                                  // moon behind a drifting cloud
-      ui.fillCircle(x + s / 3, y + s / 3, s / 7, ink);
-      ui.fillCircle(x + s / 3 + s / 12, y + s / 4, s / 9, bg);
+      wxCrescent(x + s / 3, y + s / 3, s / 7, x + s / 3 + s / 12, y + s / 4, s / 9, ink);
       wxCloud(x, y + s / 5, s, body, (int)(1.5f * sinf(t / 700.0f)));
       break;
     case WX_CLOUD:
@@ -401,26 +429,25 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   uint16_t subCol  = bright ? wb565(0x30C6) : COL_BODY;   // small text
   uint16_t muteCol = bright ? wb565(0x30E6) : COL_MUTED;  // captions / footer
   uint16_t clkCol  = bright ? wb565(0x0040) : COL_ROSSO;  // the one accent
-  // Text clips to the scene colour actually rendered at that row (bgAt —
-  // sampled back out of the framebuffer by wxscene.cpp), so the knock-out
-  // always lands on whatever is behind it — sky, mist, mountain, or water.
+  // The scene shows through the type (see the note on bgAt above) — sky, mist,
+  // mountain or water, whatever is actually behind each glyph.
   if (!d.valid) {
     ui.setFont(&fonts::Font2);
-    ui.setTextColor(numCol, bgAt(150));
+    ui.setTextColor(numCol);
     ui.setCursor(14, 150);
     ui.print("STANDBY");
-    ui.setTextColor(muteCol, bgAt(172));
+    ui.setTextColor(muteCol);
     ui.setCursor(14, 172);
     ui.print("WEATHER: N/A");
     return;
   }
   char big[8]; snprintf(big, sizeof(big), "%.0f", d.temperature);
   ui.setFont(&fonts::Font8);
-  ui.setTextColor(numCol, bgAt(72));
+  ui.setTextColor(numCol);
   ui.setCursor(16, 72);
   ui.print(big);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(subCol, bgAt(84));
+  ui.setTextColor(subCol);
   ui.setCursor(16 + ui.textWidth(big, &fonts::Font8) + 4, 84);
   ui.print("C");
   // Animated condition icon in the free block right of the temperature; shrink
@@ -430,7 +457,7 @@ static void renderWeather(uint16_t* buf, int w, int h) {
     int isz = 48, ix = 116;
     if (tempEnd + 6 > ix) { isz = 40; ix = w - 8 - isz; }
     if (tempEnd + 4 > ix) { isz = 32; ix = w - 6 - isz; }
-    drawWxIcon(ix, 62, isz, fam, numCol, subCol, muteCol, bgAt(62 + isz / 2));
+    drawWxIcon(ix, 62, isz, fam, numCol, subCol, muteCol);
   }
   // Caption style: uppercase (the bitmap fonts have no tracking).
   char cond[19];
@@ -438,27 +465,27 @@ static void renderWeather(uint16_t* buf, int w, int h) {
   for (int i = 0; i < cn; i++) cond[i] = (char)toupper((unsigned char)d.condition[i]);
   cond[cn] = 0;
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(subCol, bgAt(140));
+  ui.setTextColor(subCol);
   ui.setCursor(14, 140);
   ui.print(kIcons[wxIconGlyph(d.condition_code)]);
   ui.setCursor(14 + 16, 140);
   ui.print(cond);
   ui.setFont(&fonts::Font2);
-  ui.setTextColor(subCol, bgAt(180));
+  ui.setTextColor(subCol);
   char l2[24]; snprintf(l2, sizeof(l2), "H %.0f  L %.0f  RH %d%%",
                        d.temp_high, d.temp_low, d.humidity);
   ui.setCursor(14, 180);
   ui.print(l2);
-  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(muteCol, bgAt(200)); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
+  if (d.aqi > 0) { ui.setFont(&fonts::Font0); ui.setTextColor(muteCol); ui.setCursor(14, 200); ui.printf("AQI %d", d.aqi); }
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);   // board TZ is PST8PDT (Vancouver); gmtime showed UTC
   char clk[16]; strftime(clk, sizeof(clk), "%H:%M", t);
   ui.setFont(&fonts::Font4);
-  ui.setTextColor(clkCol, bgAt(232));
+  ui.setTextColor(clkCol);
   ui.setCursor(14, 232);
   ui.print(clk);
   ui.setFont(&fonts::Font0);
-  ui.setTextColor(muteCol, bgAt(254));
+  ui.setTextColor(muteCol);
   ui.setCursor(14, 254);
   ui.print("PRESS: CYCLE SCENES");
 }

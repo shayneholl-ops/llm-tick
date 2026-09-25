@@ -29,6 +29,8 @@ void wxSceneInit();
 //   valid — false draws the flat standby canvas instead
 void wxSceneRender(uint16_t* buf, int w, int h, int fam, bool day, bool valid);
 
-// The scene's logical (unswapped) colour at row y — sample taken from the last
-// rendered frame; used to clip the text background to the local scene colour.
+// The scene's logical (unswapped) colour at row y — sampled from the last
+// rendered frame at x==2. Used for legibility checks and for the UI's 1-px
+// header rule; NOT as a text background (the UI draws transparent over the
+// scene — see the note on bgAt in ui.cpp).
 uint16_t wxRowColor(int y);
