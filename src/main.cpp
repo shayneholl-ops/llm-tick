@@ -186,6 +186,7 @@ void checkButton() {
 
 // Serial test hook: a "PRESS" line over USB-serial emulates a BOOT button press.
 // DIAGNOSTIC (2026-09-19): also "LED 0|1", "BL 0|25|50|100", "PAT 0..6", "ST".
+// DIAGNOSTIC (2026-09-25): "WXB [0..5]" picks the weather background.
 void checkSerialCmd() {
   static char buf[16];
   static int n = 0;
@@ -237,10 +238,17 @@ void checkSerialCmd() {
         g_wxNightForce = !g_wxNightForce;
         Serial.printf("[diag] WXN force-night=%d\n", (int)g_wxNightForce);
       }
+      // WXB [n] — pick the weather background. No argument cycles to the next
+      // one. Used for the on-glass eye-test of the Vancouver variants.
+      else if (n >= 3 && strncmp(buf, "WXB", 3) == 0) {
+        int idx = n >= 5 ? atoi(buf + 4) : (g_wxBg + 1);
+        g_wxBg = ((idx % wxBgCount()) + wxBgCount()) % wxBgCount();
+        Serial.printf("[diag] WXB bg=%d (%s)\n", g_wxBg, wxBgName(g_wxBg));
+      }
       else if (n >= 2 && strncmp(buf, "ST", 2) == 0) {
-        Serial.printf("[diag] scene=%d(%s) blDuty=%d led=%d pat=%d wxn=%d render=%lums\n",
-                      g_scene, sceneName(g_scene), g_diagBlDuty, g_diagLed, g_diagPat,
-                      (int)g_wxNightForce, (unsigned long)(g_renderUs / 1000));
+        Serial.printf("[diag] scene=%d(%s) bg=%d(%s) blDuty=%d led=%d pat=%d wxn=%d render=%lums\n",
+                      g_scene, sceneName(g_scene), g_wxBg, wxBgName(g_wxBg), g_diagBlDuty, g_diagLed,
+                      g_diagPat, (int)g_wxNightForce, (unsigned long)(g_renderUs / 1000));
       }
       n = 0;
     } else if (n < (int)sizeof(buf) - 1) {

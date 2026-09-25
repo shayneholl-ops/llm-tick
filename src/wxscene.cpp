@@ -53,6 +53,8 @@ enum {
   K_AURC, K_AURP, K_DECK, K_BEACON,                 // aurora + bridge
   K_RAIN, K_SNOW1, K_SNOW2, K_SNOW3,                // precipitation
   K_GUST1, K_GUST2, K_GUST3, K_SHIM,                // gusts + clear-day shimmer
+  K_HULL, K_SUPER, K_WIN, K_CITY, K_SAIL,           // variant ink: ships + city
+  K_PLANE, K_ORCA, K_PETAL, K_GRASS, K_STONE,       // variants: plane/orca/blossom
   K_STANDBY,
   K_N
 };
@@ -80,6 +82,14 @@ static const uint16_t kBase[K_N] = {
   WX_RGB(0xff, 0x2d, 0x78),
   WX_RGB(0xff, 0xe0, 0x4a), WX_RGB(0x00, 0xff, 0xcc), WX_RGB(0xc0, 0xff, 0xf4),
   WX_RGB(0xff, 0xe0, 0x4a),
+  // Variant ink (2026-09-25). These still go through wb565, which halves the
+  // blue channel, so the "white" sails and the plane land as a warm cream and
+  // the blossom needed its blue driven right up (0xffacff) to come back as pink
+  // (255,149,156) instead of orange.
+  WX_RGB(0x10, 0x18, 0x24), WX_RGB(0x3a, 0x46, 0x58), WX_RGB(0xff, 0xd8, 0x88),
+  WX_RGB(0x18, 0x24, 0x32), WX_RGB(0xe6, 0xf4, 0xff),
+  WX_RGB(0xd8, 0xe8, 0xf4), WX_RGB(0x0a, 0x10, 0x1c), WX_RGB(0xff, 0xac, 0xff),
+  WX_RGB(0x1c, 0x38, 0x24), WX_RGB(0x4a, 0x54, 0x60),
   WX_RGB(0x18, 0x18, 0x18)
 };
 
@@ -471,6 +481,470 @@ static void drawBridgeNight(uint32_t t) {
   reflLine(28, 232, 288, wl(K_STARP), 240, 70);
 }
 
+// ── Vancouver background variants (备选, 2026-09-25) ─────────────────────────
+// Five alternates to the original Lions Gate composition. Each keeps the shared
+// machinery — sky ramp, mist, aurora, stars, moon, water, weather particles —
+// and swaps the landform line-up plus one signature Vancouver subject:
+//
+//   WXBG_ANCHOR    bulk carriers riding at anchor across English Bay, the Point
+//                  Atkinson light on the point, a tug working the near lane
+//   WXBG_SKYLINE   downtown's tower bar with a scatter of lit windows, Canada
+//                  Place's five sails in front of it, the two Lions behind
+//   WXBG_SEAPLANE  a Harbour Air float plane taxiing out of Coal Harbour with
+//                  spray and wake, two more on the dock, gulls
+//   WXBG_ORCA      a resident orca surfacing in the inlet — the bull's dorsal
+//                  fin, saddle and eye patch, splash along the waterline
+//   WXBG_BLOSSOM   the Stanley Park seawall in April: stone cap and rail, park
+//                  path, two cherry canopies, petals on the breeze
+//
+// One rule the now-transparent text layer imposes (see ui.cpp): anything that
+// crosses a caption band — weather page y 72..92, 140..152, 180..190, 200..208,
+// 232..248, 254..262 — stays a DARK silhouette. Only thin bright accents are
+// allowed there; a big bright shape would fight the white type that shows
+// through to the scene behind it.
+int g_wxBg = WXBG_LIONS;
+
+int wxBgCount() { return WXBG_COUNT; }
+
+const char* wxBgName(int bg) {
+  static const char* n[WXBG_COUNT] = {
+    "lions-gate", "anchorage", "skyline", "seaplane", "orca", "blossom"
+  };
+  return n[(bg < 0 || bg >= WXBG_COUNT) ? 0 : bg];
+}
+
+// Three gulls working the tide rip (two brush strokes each). Shared by the
+// anchorage, seaplane and orca variants — a bit of life in the middle distance.
+static void drawGulls(uint32_t t, int n) {
+  static const int16_t gx[3] = { 34, 120, 74 };
+  static const int16_t gy[3] = { 62, 50, 98 };
+  static const float   gd[3] = { 0.0f, 0.37f, 0.71f };
+  uint16_t c = wl(K_STARW);
+  if (n > 3) n = 3;
+  for (int i = 0; i < n; i++) {
+    float p = fracf(t / 9000.0f + gd[i]);
+    float e = ramp01(p);
+    int x = gx[i] + (int)(-9.0f + 18.0f * e);
+    int y = gy[i] + (int)(3.0f * sinf(TAU_F * p * 2.0f));
+    int f = (int)(fadeWin(p, 0.20f, 0.80f, 0.50f) * 1024.0f);
+    if (f <= 0) continue;
+    blendPx(x - 2, y, c, f / 2);
+    blendPx(x - 1, y - 1, c, f);
+    blendPx(x, y, c, f);
+    blendPx(x + 1, y - 1, c, f);
+    blendPx(x + 2, y, c, f / 2);
+  }
+}
+
+// ── variant 1: anchorage ────────────────────────────────────────────────────
+
+// One ship at anchor: dark hull, red boot-top, a lighter house aft, short mast.
+// `s` is the hull length in px; the slow bob is per-ship so they never sync.
+static void drawFreighter(int x, int y, int s, uint32_t t) {
+  int bob = (int)(0.9f * sinf(TAU_F * t / 7400.0f + (float)x * 0.07f) + 0.5f);
+  y += bob;
+  int hh = 2 + s / 11;                                            // hull depth
+  // The inlet is dark at BOTH times of day (day ~lum 32, night ~lum 25), so a
+  // near-black hull just vanished into the water. The hull is now a mid grey and
+  // only the small superstructure carries any light.
+  fillRect(x, y, s, hh, wp(K_SUPER));
+  hLine(x, y + hh, s, sw(mix1024(wl(K_SUPER), wl(K_STARP), 700))); // boot-top
+  int hw = 3 + s / 5;                                              // house, aft
+  uint16_t sup = sw(mix1024(wl(K_SUPER), wl(K_SAIL), 420));
+  fillRect(x + s - hw - 1, y - hh, hw, hh, sup);
+  fillRect(x + s - hw - 3, y - hh - 3, 3, 4, sup);                 // funnel
+  hLine(x + 2, y - 1, s / 2, sw(mix1024(wl(K_SUPER), wl(K_SAIL), 250)));
+  dashLine(x + s / 3, y, x + s / 3, y - 6, wp(K_SUPER), 1, 1);     // fore mast
+  px(x + s - hw, y - hh + 1, wp(K_WIN));                           // one lit window
+}
+
+// Point Atkinson light: white tower, red cap, a lamp on the 5 s twinkle.
+static void drawLighthouse(int x, int y, uint32_t t) {
+  fillRect(x - 2, y - 8, 5, 8, sw(mix1024(wl(K_CITY), wl(K_SAIL), 700)));
+  fillRect(x - 3, y - 10, 7, 2, sw(mix1024(wl(K_SAIL), wl(K_STARP), 800)));
+  float b = 0.25f + 0.60f * pingpong(t, 5000.0f, 0.0f);
+  blendPx(x, y - 11, wl(K_BEACON), (int)(b * 1024.0f));
+}
+
+// A tug crossing the near lane on a ~20 s loop, trailing its wake.
+static void drawTug(uint32_t t) {
+  int x = -46 + (int)fmodf((float)t * 0.0116f, 232.0f);
+  if (x > sW + 10 || x < -46) return;
+  int y = 236;
+  fillRect(x, y, 22, 4, wp(K_HULL));
+  fillRect(x + 12, y - 6, 8, 6, wp(K_SUPER));
+  vLine(x + 16, y - 10, 4, wp(K_SUPER));
+  px(x + 16, y - 11, wp(K_WIN));
+  hLine(x + 1, y + 4, 20, sw(mix1024(wl(K_HULL), wl(K_STARP), 420)));
+  // wake: a fading V astern, mixed off the water colour already on the glass
+  int si = y + 4 - SEA_Y;
+  if (si < 0) si = 0;
+  if (si >= sSeaN) si = sSeaN - 1;
+  uint16_t wk = sw(mix1024(sSeaTab[si], wl(K_STARW), 300));
+  for (int i = 1; i < 22; i++) {
+    int xx = x - i;
+    px(xx, y + 4 + i / 5, wk);
+    px(xx, y + 6 + i / 4, wk);
+  }
+}
+
+static void drawAnchorage(bool day, uint32_t t) {
+  (void)day;
+  drawLighthouse(157, 196, t);
+  // Bulk carriers across the bay, far to near. The hulls are mid-grey so they
+  // read against the dark inlet; the type is white and still wins on top.
+  drawFreighter(14, 192, 34, t);
+  drawFreighter(104, 195, 46, t);
+  drawFreighter(36, 207, 62, t);
+  drawGulls(t, 3);
+  drawTug(t);
+}
+
+// ── variant 2: downtown skyline + Canada Place ──────────────────────────────
+
+// Downtown across the water: a dozen towers with a scatter of lit windows. By
+// day the glass is a mid-tone so the bar reads against the mountains; at night
+// the bar goes near-black and only the windows are lit. Either way the brightest
+// thing here is a 2x2 window block and there are never many in one row, so the
+// white type (white ink sits straight on the scene — see ui.cpp) always wins.
+static void drawCityBar(int x0, int x1, int baseY, bool day, uint32_t t) {
+  static const uint8_t tw[12] = { 12, 16,  9, 14, 11, 18, 10, 13,  8, 15, 12, 10 };
+  static const uint8_t th[12] = { 30, 44, 22, 52, 34, 26, 46, 38, 24, 40, 28, 36 };
+  uint16_t face = day ? sw(mix1024(wl(K_CITY), wl(K_SAIL), 190)) : wp(K_CITY);
+  int16_t tx[12], ty[12]; uint8_t tww[12], thh[12]; int n = 0;
+  int x = x0;
+  for (int i = 0; i < 12 && x < x1; i++) {
+    int wdt = tw[i];
+    if (x + wdt > x1) wdt = x1 - x;
+    if (wdt < 4) break;
+    int hgt = th[i];
+    if (hgt > baseY) hgt = baseY;
+    int top = baseY - hgt;
+    fillRect(x, top, wdt, hgt, face);
+    if ((i & 3) == 1)                 // a sloped crown
+      fillTri(x, top, x + wdt, top, x + wdt / 2, top - 6, face);
+    if ((i & 3) == 3)                 // a roof mast
+      vLine(x + wdt / 2, top - 9, 9, face);
+    hLine(x, top, wdt, sw(mix1024(wl(K_CITY), wl(K_SAIL), day ? 330 : 150)));
+    tx[n] = (int16_t)x; ty[n] = (int16_t)top; tww[n] = (uint8_t)wdt; thh[n] = (uint8_t)hgt;
+    n++;
+    x += wdt + 1 + (i & 1);
+  }
+  if (day) return;                    // by day it is plain dark glass
+  // Night: 2x2 window blocks on a fixed lattice, always inside a tower.
+  float tk = 0.5f + 0.5f * sinf(TAU_F * t / 9000.0f);
+  uint16_t lit = sw(mix1024(wl(K_CITY), wl(K_WIN), (int)((0.28f + 0.26f * tk) * 1024.0f)));
+  for (int i = 0; i < n; i++) {
+    for (int yy = ty[i] + 4; yy < ty[i] + thh[i] - 4; yy += 5) {
+      for (int xx = tx[i] + 2; xx < tx[i] + tww[i] - 3; xx += 4) {
+        if (((xx * 5 + yy * 3) % 7) != 0) continue;
+        px(xx, yy, lit);
+        if (tww[i] >= 11) px(xx + 1, yy, lit);
+      }
+    }
+  }
+}
+
+// Canada Place: five sails on a low pier — the postcard Vancouver waterfront.
+// The sails are a DARK silhouette with one bright leading edge each: filled
+// cream they were five bright blobs sitting right in the H/L/RH row (y 180..190).
+static void drawCanadaPlace(int x, int baseY, bool day) {
+  fillRect(x - 2, baseY - 3, 64, 3, wp(K_CITY));                  // the pier
+  uint16_t fill = sw(mix1024(wl(K_CITY), wl(K_SAIL), day ? 260 : 200));
+  uint16_t edge = sw(mix1024(wl(K_CITY), wl(K_SAIL), 620));
+  for (int i = 0; i < 5; i++) {
+    int sx = x + i * 12;
+    int hgt = 10 + ((i == 2) ? 6 : (i & 1) ? 1 : 4);
+    fillTri(sx, baseY - 3, sx + 11, baseY - 3, sx + 6, baseY - 3 - hgt, fill);
+    drawLine(sx + 1, baseY - 4, sx + 6, baseY - 3 - hgt, edge);
+  }
+}
+
+static void drawSkylineBg(bool day, uint32_t t) {
+  drawCityBar(4, 168, 190, day, t);
+  drawCanadaPlace(72, 197, day);
+  drawGulls(t, 2);
+}
+
+// ── variant 3: Harbour Air float plane ──────────────────────────────────────
+
+// A float plane from the side: fuselage, high wing, tail fin, two floats, a red
+// fin flash. `s` is the fuselage length.
+static void drawFloatPlane(int x, int y, int s, bool day) {
+  // Off-white, not white: the type sits straight on the scene, so the body is
+  // knocked down to a mid cream and only the edges stay crisp.
+  uint16_t body = sw(mix1024(wl(K_PLANE), wl(K_HULL), 450));
+  uint16_t hull = wp(K_HULL);
+  int fy = y;                                                     // centre line
+  fillRect(x, fy - 2, s, 4, body);                                // fuselage
+  fillTri(x + s, fy - 2, x + s, fy + 1, x + s + 4, fy - 1, body); // nose cone
+  fillRect(x + s - 4, fy - 7, 3, 5, body);                        // fin
+  fillRect(x + s - 9, fy - 4, 5, 2, body);                        // tailplane
+  fillRect(x + s / 3, fy - 7, s / 2, 2, body);                    // high wing
+  fillRect(x + s / 4, fy - 5, 2, 3, hull);                        // wing struts
+  fillRect(x + s / 2, fy - 5, 2, 3, hull);
+  fillRect(x - 1, fy + 4, s + 3, 2, hull);                        // the floats
+  fillRect(x + 2, fy + 2, 2, 2, hull);
+  fillRect(x + s - 6, fy + 2, 2, 2, hull);
+  hLine(x - 1, fy + 3, s + 3, sw(mix1024(wl(K_HULL), wl(K_STARP), 520)));
+  fillRect(x + s - 4, fy - 7, 2, 2, wp(K_STARP));                 // red fin flash
+  if (day) px(x + s - 2, fy - 1, wp(K_WIN));                      // cockpit glass
+}
+
+// The spray the floats throw up, plus the trail of disturbed water astern.
+static void drawSpray(int x, int y, uint32_t t) {
+  uint16_t c = wl(K_STARW);
+  for (int i = 0; i < 9; i++) {
+    int sx = x - 2 - i * 3;
+    if ((unsigned)sx >= (unsigned)sW) continue;
+    int hop = (int)((sinf((float)i * 0.9f + (float)t / 300.0f) + 1.0f) * 2.0f);
+    blendPx(sx, y + 1 - hop, c, 430 - i * 32);
+    blendPx(sx, y + 2, c, 300 - i * 24);
+  }
+}
+
+static void drawSeaplane(bool day, uint32_t t) {
+  // Harbour Air taxis out across the near lane on a 24 s loop, re-entering from
+  // the left each pass. It runs low and the two moored planes sit high, because
+  // the usage page leaves only two clear water bands: y 219..237 (between the
+  // Weekly footer and "GPU") and y 287..299 (between the temp row and the status
+  // row). A plane spans fy-7..fy+6, so those two bands are exactly where a plane
+  // fits without a fuselage crossing a glyph.
+  int s = 34, y = 293;
+  int x = -s - 8 + (int)fmodf((float)t * ((float)sW + 60.0f) / 24000.0f, (float)sW + 60.0f);
+  drawSpray(x, y + 4, t);
+  drawFloatPlane(x, y, s, day);
+  // two more tied up, right of frame, in the upper clear band
+  drawFloatPlane(126, 226, 18, day);
+  drawFloatPlane(150, 267, 15, day);
+  drawGulls(t, 2);
+}
+
+// ── variant 4: orca surfacing ───────────────────────────────────────────────
+
+// A resident orca. A 13 s cycle: the back rolls up out of the water, the bull's
+// dorsal fin arcs clear, then it sinks again. The inlet is dark, so a true-black
+// whale disappeared — the back is a dark slate that reads as a silhouette, and
+// the markings (saddle, eye patch) are the only light on it.
+static void drawOrca(int cx, uint32_t t) {
+  float p = fmodf((float)t, 13000.0f) / 13000.0f;
+  float up = sinf(PI_F * p);                                      // 0..1..0
+  int surf = 236;
+  int bh = (int)(9.0f * up + 0.5f);                               // back showing
+  if (bh < 1) return;
+  uint16_t body = sw(mix1024(wl(K_SUPER), wl(K_SAIL), 180));
+  for (int i = 0; i <= 58; i++) {
+    int x = cx - 29 + i;
+    int th = (int)((float)bh * (0.30f + 0.70f * sinf(PI_F * (float)i / 58.0f)) + 0.5f);
+    if (th < 1) th = 1;
+    fillRect(x, surf - th, 1, th, body);
+  }
+  int fh = (int)(22.0f * up + 0.5f);
+  if (fh > 2)
+    fillTri(cx - 3, surf - bh, cx + 5, surf - bh, cx + 4, surf - bh - fh, body);
+  // the grey saddle patch behind the fin
+  for (int i = 0; i < 8; i++)
+    blendPx(cx + 8 + i / 2, surf - bh + 1 - (i & 1), wl(K_STARW), 250);
+  // the white eye patch, forward of the fin
+  for (int i = 0; i < 6; i++)
+    blendPx(cx - 17 + i, surf - bh, wl(K_STARW), 300 - i * 24);
+  // splash along the waterline, brightest at the top of the roll
+  int f = (int)(up * 760.0f);
+  for (int i = 0; i < 12; i++)
+    blendPx(cx - 32 + i * 6, surf - 1 - (i & 1), wl(K_STARW), f / 2);
+}
+
+static void drawOrcaScene(bool day, uint32_t t) {
+  (void)day;
+  drawOrca(118, t);
+  drawGulls(t, 3);
+}
+
+// ── variant 5: Stanley Park seawall in blossom ──────────────────────────────
+
+// A cherry bough hanging into the frame from one of the top corners. Two of
+// these frame the sky the way the April walk along the seawall does.
+//
+// Why the top corners: rows 0..60 carry no type on EITHER page (the usage page
+// starts at y 64, the weather page at y 72), so a bough there can be bright
+// without ever fighting a glyph. The rest of the frame is spoken for — the
+// usage page's lowest type is the status row at y 299..308, so there is no free
+// band at the bottom either. `dir` = +1 opens to the left, -1 to the right, and
+// both stay clear of the moon's disc (x 52..132, y 16..96).
+static void drawBlossomBranch(int dir, uint32_t t) {
+  uint16_t bark = sw(mix1024(wl(K_ORCA), wl(K_STONE), 780));
+  uint16_t pet = sw(mix1024(wl(K_ORCA), wl(K_PETAL), 800));
+  uint16_t pet2 = sw(mix1024(wl(K_ORCA), wl(K_PETAL), 560));
+  int sway = (int)(1.6f * sinf(TAU_F * t / 6500.0f) + 0.5f);
+  const int bx[4] = { 0, 20, 38, 48 };                  // distance out along the bough
+  const int by[4] = { 5, 15, 8, 20 };
+  for (int i = 0; i < 3; i++) {
+    int xa = dir > 0 ? bx[i] : sW - 1 - bx[i], xb = dir > 0 ? bx[i + 1] : sW - 1 - bx[i + 1];
+    drawLine(xa, by[i] + sway, xb, by[i + 1] + sway, bark);
+    drawLine(xa, by[i] + 1 + sway, xb, by[i + 1] + 1 + sway, bark);
+  }
+  const int cx4[3] = { 8, 26, 42 };                     // cluster centres
+  const int cy4[3] = { 14, 5, 18 };
+  for (int c = 0; c < 3; c++) {
+    int x0 = dir > 0 ? cx4[c] : sW - 1 - cx4[c];
+    int y0 = cy4[c] + sway;
+    int r = 9 - (c & 1);
+    for (int dy = -r; dy <= r; dy++) {
+      int yy = y0 + dy;
+      if ((unsigned)yy >= (unsigned)sH) continue;
+      float u = (float)dy / (float)r;
+      int ww = (int)((float)r * sqrtf(1.0f - u * u) + 0.5f);
+      for (int dx = -ww; dx <= ww; dx++) {
+        int xx = x0 + dx;
+        if ((unsigned)xx >= (unsigned)sW) continue;
+        if (((xx * 5 + yy * 3) & 3) == 0) continue;     // dithered edge: sky shows through
+        px(xx, yy, ((xx * 3 + yy * 7) & 3) ? pet : pet2);
+      }
+    }
+  }
+}
+
+// The seawall itself: stone cap, rail, park path, grass bank, and the two
+// boughs overhanging the top corners. Everything below the waterline stays
+// near-black on purpose — that band carries the usage page's GPU, temp and
+// status rows.
+static void drawBlossomFg(bool day, uint32_t t) {
+  (void)day;
+  // The wall sits in shadow: a full-width lit cap at lum ~90 was a grey band
+  // straight through the weather page's clock row (y 232..248), so the stone is
+  // knocked down to a silhouette and only the 1-px top edge catches the light.
+  fillRect(0, 248, sW, sH - 248, wp(K_GRASS));                    // the park bank
+  hLine(0, 248, sW, sw(mix1024(wl(K_GRASS), wl(K_STONE), 420)));  // dark grass edge
+  fillRect(0, 241, sW, 7, sw(mix1024(wl(K_STONE), wl(K_ORCA), 620)));  // seawall cap
+  hLine(0, 241, sW, sw(mix1024(wl(K_STONE), wl(K_SAIL), 300)));   // lit top edge
+  hLine(0, 247, sW, sw(mix1024(wl(K_STONE), wl(K_ORCA), 500)));   // shadow line
+  // the rail on the water side of the cap
+  uint16_t rail = sw(mix1024(wl(K_STONE), wl(K_ORCA), 300));
+  hLine(0, 235, sW, rail);
+  for (int x = 6; x < sW; x += 15) vLine(x, 235, 7, rail);
+  // the path, a lamp post and a bench below it
+  hLine(0, 262, sW, sw(mix1024(wl(K_GRASS), wl(K_STONE), 260)));
+  vLine(92, 262, 52, sw(mix1024(wl(K_ORCA), wl(K_STONE), 300)));
+  px(92, 260, wp(K_WIN));
+  fillRect(60, 296, 16, 2, sw(mix1024(wl(K_ORCA), wl(K_STONE), 420)));
+  vLine(61, 298, 5, wp(K_ORCA));
+  vLine(74, 298, 5, wp(K_ORCA));
+  drawBlossomBranch(1, t);
+  drawBlossomBranch(-1, t);
+}
+
+// Cherry petals on the breeze — the snow drift re-coloured and made lateral.
+static void drawPetals(uint32_t t) {
+  static const int16_t px0[10] = { 12, 40, 68, 96, 124, 152, 26, 82, 110, 166 };
+  static const int16_t py0[10] = { 18, 58, 34, 88, 14, 74, 128, 118, 54, 99 };
+  static const float   pd[10] = { 0.0f, 1.9f, 3.1f, 5.4f, 7.2f, 2.6f, 4.4f, 6.1f, 8.3f, 9.0f };
+  uint16_t c = wl(K_PETAL);
+  for (int i = 0; i < 10; i++) {
+    float p = fracf(t / 11000.0f + pd[i] / 11.0f);
+    float e = ramp01(p);
+    int x = px0[i] + (int)(-7.0f + 22.0f * e);
+    int y = py0[i] + (int)(-6.0f + 150.0f * e);
+    int f = (int)(fadeWin(p, 0.15f, 0.85f, 0.62f) * 1024.0f);
+    if (f <= 0) continue;
+    blendPx(x, y, c, f);
+    blendPx(x + 1, y + 1, c, f * 3 / 5);
+    blendPx(x - 1, y + 2, c, f / 3);
+  }
+}
+
+// ── variant dispatch ────────────────────────────────────────────────────────
+
+// Landforms per variant: a day and a night silhouette line-up chosen so the
+// subject in front of them has the reading it needs. WXBG_LIONS and
+// WXBG_BLOSSOM share the original default.
+static void drawLandformsBg(bool day, uint32_t t) {
+  if (day) {
+    switch (g_wxBg) {
+      case WXBG_ANCHOR:                 // further shore: the ships own the middle
+        fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTFAR));
+        fillPoly(kPineX, kPineY, 7, wp(K_MTMID));
+        drawConifers(t);
+        return;
+      case WXBG_SKYLINE:                // the city bar will cover the lower slopes
+        fillPoly(kLionsX, kLionsY, 10, wp(K_MTFAR));
+        fillTri(80, 92, 74, 102, 86, 102, sw(mix1024(wl(K_MTFAR), wl(K_CREST), 660)));
+        fillTri(125, 78, 118, 90, 132, 90, sw(mix1024(wl(K_MTFAR), wl(K_CREST), 760)));
+        fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTMID));
+        return;
+      case WXBG_SEAPLANE:               // Coal Harbour: the park runs to the water
+        fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTFAR));
+        fillPoly(kPineX, kPineY, 7, wp(K_MTMID));
+        drawConifers(t);
+        return;
+      case WXBG_ORCA:                   // an open-water view of the same coast
+        fillPoly(kLionsX, kLionsY, 10, wp(K_MTFAR));
+        fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTMID));
+        return;
+      default:
+        break;
+    }
+    fillPoly(kLionsX, kLionsY, 10, wp(K_MTFAR));
+    {   // Lions glacier crests
+      uint16_t c = wp(K_CREST);
+      fillTri(80, 92, 74, 102, 86, 102, sw(mix1024(wl(K_MTFAR), c, 660)));
+      fillTri(125, 78, 118, 90, 132, 90, sw(mix1024(wl(K_MTFAR), c, 760)));
+    }
+    fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTMID));
+    drawConifers(t);
+    return;
+  }
+  switch (g_wxBg) {
+    case WXBG_ANCHOR:
+      fillPoly(kGrouseX, kGrouseY, 7, wp(K_PINE));
+      return;
+    case WXBG_SKYLINE:
+      fillPoly(kRidgeX, kRidgeY, 10, wp(K_RIDGE));
+      fillTri(84, 96, 79, 104, 89, 104, sw(mix1024(wl(K_RIDGE), wl(K_GLINT), 450)));
+      fillTri(132, 82, 126, 92, 138, 92, sw(mix1024(wl(K_RIDGE), wl(K_GLINT), 550)));
+      return;
+    case WXBG_SEAPLANE:
+      fillPoly(kPineX, kPineY, 7, wp(K_PINE));
+      return;
+    case WXBG_ORCA:
+      fillPoly(kRidgeX, kRidgeY, 10, wp(K_RIDGE));
+      fillTri(84, 96, 79, 104, 89, 104, sw(mix1024(wl(K_RIDGE), wl(K_GLINT), 450)));
+      return;
+    default:
+      break;
+  }
+  fillPoly(kRidgeX, kRidgeY, 10, wp(K_RIDGE));
+  {   // summit glints under starlight
+    uint16_t c = wp(K_GLINT);
+    fillTri(84, 96, 79, 104, 89, 104, sw(mix1024(wl(K_RIDGE), c, 450)));
+    fillTri(132, 82, 126, 92, 138, 92, sw(mix1024(wl(K_RIDGE), c, 550)));
+  }
+  fillPoly(kPineX, kPineY, 7, wp(K_PINE));
+}
+
+// True when this variant wants the Lions Gate span in frame.
+static bool bgHasBridge() {
+  return g_wxBg == WXBG_LIONS || g_wxBg == WXBG_ANCHOR || g_wxBg == WXBG_BLOSSOM;
+}
+
+// The variant's subject, drawn on top of the water and the light path.
+static void drawFeatureBg(bool day, uint32_t t) {
+  switch (g_wxBg) {
+    case WXBG_ANCHOR:   drawAnchorage(day, t); break;
+    case WXBG_SKYLINE:  drawSkylineBg(day, t); break;
+    case WXBG_SEAPLANE: drawSeaplane(day, t);  break;
+    case WXBG_ORCA:     drawOrcaScene(day, t); break;
+    default: break;                            // lions-gate / blossom
+  }
+}
+
+// Nearest-layer elements, drawn after the bridge so they occlude it.
+static void drawFeatureFg(bool day, uint32_t t) {
+  if (g_wxBg == WXBG_BLOSSOM) {
+    drawBlossomFg(day, t);
+    drawPetals(t);
+  }
+}
+
 // ── night scene ─────────────────────────────────────────────────────────────
 
 static int16_t sEnvTab[65];     // sin(pi*u) * 1024 — the aurora's vertical envelope
@@ -723,17 +1197,12 @@ void wxSceneRender(uint16_t* buf, int w, int h, int fam, bool day, bool valid) {
   if (day) {
     drawSunGlow(t);
     drawMist(t, fam);
-    fillPoly(kLionsX, kLionsY, 10, wp(K_MTFAR));
-    {   // Lions glacier crests
-      uint16_t c = wp(K_CREST);
-      fillTri(80, 92, 74, 102, 86, 102, sw(mix1024(wl(K_MTFAR), c, 660)));
-      fillTri(125, 78, 118, 90, 132, 90, sw(mix1024(wl(K_MTFAR), c, 760)));
-    }
-    fillPoly(kGrouseX, kGrouseY, 7, wp(K_MTMID));
-    drawConifers(t);
+    drawLandformsBg(true, t);
     drawWater(true, t);
     drawLightPath(130, true, t);      // sun path on the inlet
-    drawBridgeDay();
+    drawFeatureBg(true, t);
+    if (bgHasBridge()) drawBridgeDay();
+    if (g_wxBg == WXBG_BLOSSOM) drawFeatureFg(true, t);
     if (fam == WX_SUN || fam == WX_PARTLY_D) drawShimmer(t);
     if (fam == WX_RAIN || fam == WX_STORM) drawRain(t, fam == WX_STORM);
     if (fam == WX_SNOW) drawSnow(t, true);
@@ -744,16 +1213,12 @@ void wxSceneRender(uint16_t* buf, int w, int h, int fam, bool day, bool valid) {
     drawStars(t);
     if (fam == WX_MOON) drawColorStars(t);
     drawMoon(t);
-    fillPoly(kRidgeX, kRidgeY, 10, wp(K_RIDGE));
-    {   // summit glints under starlight
-      uint16_t c = wp(K_GLINT);
-      fillTri(84, 96, 79, 104, 89, 104, sw(mix1024(wl(K_RIDGE), c, 450)));
-      fillTri(132, 82, 126, 92, 138, 92, sw(mix1024(wl(K_RIDGE), c, 550)));
-    }
-    fillPoly(kPineX, kPineY, 7, wp(K_PINE));
+    drawLandformsBg(false, t);
     drawWater(false, t);
     drawLightPath(92, false, t);      // moon path on the inlet
-    drawBridgeNight(t);
+    drawFeatureBg(false, t);
+    if (bgHasBridge()) drawBridgeNight(t);
+    if (g_wxBg == WXBG_BLOSSOM) drawFeatureFg(false, t);
     if (precip && fam != WX_SNOW) drawRain(t, fam == WX_STORM);
     if (fam == WX_SNOW) drawSnow(t, false);
     if (fam == WX_STORM) drawGusts(t);

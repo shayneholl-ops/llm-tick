@@ -20,6 +20,25 @@ enum WxFam {
   WX_SUN, WX_MOON, WX_PARTLY_D, WX_PARTLY_N, WX_CLOUD, WX_RAIN, WX_SNOW, WX_STORM, WX_FOG
 };
 
+// Background variants (2026-09-25) — alternates to the original composition,
+// one signature Vancouver subject each. The sky / mist / aurora / water /
+// weather machinery is shared; the landform line-up and the feature layer swap.
+// Selected at runtime via the serial `BG <n>` command (main.cpp) and drawn by
+// every scene, so the choice applies to both the usage and weather pages.
+enum WxBg {
+  WXBG_LIONS = 0,   // Lions Gate Bridge + The Lions / Grouse (the original)
+  WXBG_ANCHOR,      // bulk carriers at anchor off English Bay + Point Atkinson
+  WXBG_SKYLINE,     // downtown tower bar + Canada Place's five sails
+  WXBG_SEAPLANE,    // a Harbour Air float plane taxiing out of Coal Harbour
+  WXBG_ORCA,        // a resident orca surfacing in the inlet
+  WXBG_BLOSSOM,     // the Stanley Park seawall in April blossom
+  WXBG_COUNT
+};
+
+extern int g_wxBg;              // active variant (0..WXBG_COUNT-1)
+int wxBgCount();
+const char* wxBgName(int bg);
+
 // Build the panel-ready palette (wb565 + byte swap). Call once in setup().
 void wxSceneInit();
 
