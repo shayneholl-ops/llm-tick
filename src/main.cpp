@@ -2,10 +2,82 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <ESPmDNS.h>
+#include <USBHIDKeyboard.h>
 #include <Adafruit_NeoPixel.h>
 #include "board.h"
 #include "wxscene.h"
 #include "tick.h"
+#include "ble_host.h"
+
+// ── BLE→USB keyboard bridge (F1) ─────────────────────────────────────────────
+// The S3 is a BLE central for the Keychron K-series and a USB HID keyboard for
+// the PC. Key reports (0x2A4D notifications, boot report layout: byte0 =
+// modifiers, byte1 = reserved, byte2..7 = up to 6 HID keycodes) are re-emitted
+// over TinyUSB HID with the identical raw usages — pressRaw/releaseRaw take
+// the same HID usage codes the BLE side delivers.
+static USBHIDKeyboard uHid;
+
+// Current press state so we only emit press/release transitions.
+static bool kbdMods[8]      = { false };   // modifiers, indices per BLE bit positions 0..7
+static bool kbdKeys[64]     = { false };   // keycodes 0..63 (USB HID keyboard usages)
+#define HID_MOD_OFFSET 0xE0  // HID usage for LCtrl; BLE modifier bit n -> 0xE0+n
+
+// Reset all press state (used on disconnect: any stuck key must be released).
+static void bridgeReleaseAll(void) {
+  for (int i = 0; i < 8; i++)  if (kbdMods[i])  uHid.releaseRaw(HID_MOD_OFFSET + i);
+  for (int i = 0; i < 64; i++) if (kbdKeys[i])  uHid.releaseRaw(i);
+  memset(kbdMods, 0, sizeof(kbdMods));
+  memset(kbdKeys, 0, sizeof(kbdKeys));
+}
+
+// One decoded HID boot report -> diff against current state, emit transitions.
+static void bridgeOnKbdReport(const uint8_t* rep, uint16_t len) {
+  if (len < 1) return;
+  uint8_t mods = rep[0];
+  // modifiers (bits 0..7 map directly to HID usages 0xE0..0xE7)
+  for (int i = 0; i < 8; i++) {
+    bool on = (mods >> i) & 1;
+    if (on && !kbdMods[i])      uHid.pressRaw(HID_MOD_OFFSET + i);
+    else if (!on && kbdMods[i]) uHid.releaseRaw(HID_MOD_OFFSET + i);
+    kbdMods[i] = on;
+  }
+  // keycodes: byte 2..7 (boot report: [1]=reserved, [2..]=keys)
+  bool now[64] = { false };
+  for (int i = 2; i < 8 && i < (int)len; i++) {
+    uint8_t k = rep[i];
+    if (k && k < 64) now[k] = true;    // ignore OOB usages, ignore 0x00 (no key)
+  }
+  for (int k = 0; k < 64; k++) {
+    if (now[k] && !kbdKeys[k])      uHid.pressRaw(k);
+    else if (!now[k] && kbdKeys[k]) uHid.releaseRaw(k);
+    kbdKeys[k] = now[k];
+  }
+}
+
+// Report callback runs on the BLE task. Diff + USB write here is allowed: the
+// USB stack is independent of the render core and TinyUSB writes are quick.
+void bridgeOnReport(const uint8_t* rep, uint16_t len) {
+  if (bleIsConnected()) bridgeOnKbdReport(rep, len);
+}
+
+// Serial "TYPE <text>" — emulates the keyboard to prove the whole chain
+// (BLE→USB→host) works. Used for the self-test that originally auto-typed.
+static void bridgeType(const char* s) {
+  for (; *s; s++) {
+    char c = *(unsigned char*)s;
+    uint8_t k = 0; uint8_t mods = 0;
+    if (c >= 'a' && c <= 'z')      k = c - 'a' + 0x04;
+    else if (c >= 'A' && c <= 'Z') { k = c - 'A' + 0x04; mods = 0x02; }  // LShift
+    else if (c >= '0' && c <= '9') k = c - '0' + 0x1E;
+    else if (c == ' ')             k = 0x2C;
+    else if (c == '\n')            k = 0x28;   // Enter
+    else continue;
+    uint8_t r[8] = { mods, 0, k, 0, 0, 0, 0, 0 };
+    bridgeOnKbdReport(r, 8);
+    memset(r, 0, 8);
+    bridgeOnKbdReport(r, 8);
+  }
+}
 
 LGFX lcd;
 LGFX_Sprite spr0(&lcd), spr1(&lcd);
@@ -250,6 +322,14 @@ void checkSerialCmd() {
                       g_scene, sceneName(g_scene), g_wxBg, wxBgName(g_wxBg), g_diagBlDuty, g_diagLed,
                       g_diagPat, (int)g_wxNightForce, (unsigned long)(g_renderUs / 1000));
       }
+      // TYPE <text> — emulate the keyboard via the BLE→USB bridge chain
+      // (self-test hook; the original auto-typing spur-of-the-moment build that
+      // kept sending "hello from llm-tick usb" was removed, this is the
+      // explicit opt-in version).
+      else if (n >= 4 && strncmp(buf, "TYPE", 4) == 0) {
+        bridgeType(buf + 5);   // skip "TYPE "
+        Serial.println("[diag] TYPE sent");
+      }
       n = 0;
     } else if (n < (int)sizeof(buf) - 1) {
       buf[n++] = c;
@@ -306,9 +386,15 @@ void setup() {
   fetchUsage();
   refreshWeather();
 
+  // BLE keyboard bridge: init the NimBLE host, then scan for the keyboard.
+  // uHid.begin() is called by the USB core automatically with
+  // ARDUINO_USB_MODE=0 (TinyUSB composite: CDC console + HID keyboard).
+  bleInit(bridgeOnReport);
+  bleStartScan();
+
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
   showLed(g_scene);
-  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather");
+  Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather; TYPE <text> types via bridge");
 }
 
 void loop() {

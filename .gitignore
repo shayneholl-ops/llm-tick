@@ -22,3 +22,7 @@ usage.jsonl
 
 # local working notes / handoff scratch (not project files)
 .scratch/
+
+# BLE/USB-bridge one-off spikes (validated R1 in PLAN, not part of the built firmware)
+spike/
+spike_hid_src/
