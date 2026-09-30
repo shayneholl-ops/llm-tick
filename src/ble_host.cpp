@@ -104,6 +104,8 @@ void bleStartScan(void) {
     bleSetState(BLE_SCANNING);
     NimBLEScan* pScan = NimBLEDevice::getScan();
     pScan->setAdvertisedDeviceCallbacks(new ScanCB(), false);
+    // Active scan (interval 45, window 15) reliably hears the environment's
+    // BLE devices; use it for detection. Keep the values NimBLE-default-ish.
     pScan->setActiveScan(true);
     pScan->setInterval(45);
     pScan->setWindow(15);
@@ -228,6 +230,13 @@ void bleTick(void) {
     switch (g_state) {
         case BLE_FREE:
             if (millis() - g_lastEventAt > kScanRestartDelayMs) bleStartScan();
+            break;
+        case BLE_SCANNING:
+            // A scan pass has a finite duration (kScanDurationS). Once it ends
+            // the scanner idles, so re-fire it to keep polling for the keyboard.
+            // bleStartScan() guards on !isScanning(), so this is a no-op while a
+            // pass is still in flight.
+            if (!NimBLEDevice::getScan()->isScanning()) bleStartScan();
             break;
         case BLE_CONNECTING:
             if (g_hasAddr && millis() - g_lastEventAt > 1000)

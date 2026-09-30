@@ -42,6 +42,9 @@ def main() -> int:
     print(f"[monitor] COM5-like console open on {a.port} @ {a.baud}, DTR set. Ctrl+C to stop.")
     s.reset_input_buffer()
 
+    def ts():
+        return time.strftime("%H:%M:%S")
+
     deadline = time.time() + a.timeout if a.timeout else None
     try:
         while True:
@@ -51,7 +54,17 @@ def main() -> int:
                 # Transient USB-CDC hiccup on Windows ("ClearCommError failed /
                 # device does not recognize the command") — close, drop DTR,
                 # reopen, re-assert DTR, and keep streaming instead of crashing.
-                print(f"\n[monitor] CDC error, reopening: {e}", flush=True)
+                print(f"\n[{ts()}] [monitor] CDC error, reopening: {e}", flush=True)
+                # Capture whatever is already buffered in the driver before it's
+                # lost — often the panic text right before the port dies.
+                try:
+                    tail = s.read(4096)
+                    if tail:
+                        sys.stdout.write(f"[{ts()}] [buffered] ")
+                        sys.stdout.write(tail.decode("utf-8", errors="replace"))
+                        sys.stdout.flush()
+                except Exception:
+                    pass
                 try:
                     s.close()
                 except Exception:
@@ -61,10 +74,12 @@ def main() -> int:
                     s = serial.Serial(port=a.port, baudrate=a.baud, timeout=0.05,
                                       rtscts=False, dsrdtr=False)
                     s.dtr = True
-                    s.reset_input_buffer()
-                    print(f"[monitor] reopened {a.port}", flush=True)
+                    # NOTE: deliberately NO reset_input_buffer() here — the
+                    # crash/panic text is usually waiting in the buffer right
+                    # after a reboot and wiping it loses the root cause.
+                    print(f"[{ts()}] [monitor] reopened {a.port}", flush=True)
                 except serial.SerialException as e2:
-                    print(f"[monitor] reopen failed ({e2}); retrying...", flush=True)
+                    print(f"[{ts()}] [monitor] reopen failed ({e2}); retrying...", flush=True)
                     time.sleep(1.0)
                 continue
             if data:

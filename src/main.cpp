@@ -379,17 +379,22 @@ void setup() {
                 (unsigned)ESP.getFreeHeap());
   if (!bufs[0] || !bufs[1]) { for (;;) delay(1000); }
 
-  wifiInit();
-  ntpWait();
-  MDNS.begin("llm-tick");
-  resolveServer();
-  fetchUsage();
-  refreshWeather();
-
-  // BLE keyboard bridge: init the NimBLE host, then scan for the keyboard.
+  // BLE keyboard bridge: init NimBLE BEFORE any WiFi. [ISOLATION 2026-09-30]
+  // The BLE+WiFi coexistence crash (single S3 radio) is confirmed; this build
+  // disables WiFi entirely so we can prove BLE->USB typing works at all before
+  // tackling coexistence separately.
   // uHid.begin() is called by the USB core automatically with
   // ARDUINO_USB_MODE=0 (TinyUSB composite: CDC console + HID keyboard).
   bleInit(bridgeOnReport);
+
+  // [ISOLATION 2026-09-30] WiFi/network block DISABLED to isolate BLE typing.
+  // wifiInit();
+  // ntpWait();
+  // MDNS.begin("llm-tick");
+  // resolveServer();
+  // fetchUsage();
+  // refreshWeather();
+
   bleStartScan();
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
@@ -413,9 +418,9 @@ void loop() {
   tickLogic();   // data poll cadence, idle->standby, weather refresh, wifi backstop
 
   if (millis() - t0 > 5000) {
-    Serial.printf("[tick] scene=%d (%s) pushed=%lu render=%lums\n",
+    Serial.printf("[tick] scene=%d (%s) pushed=%lu render=%lums ble=%s\n",
                   g_scene, sceneName(g_scene), (unsigned long)fps_n,
-                  (unsigned long)(g_renderUs / 1000));
+                  (unsigned long)(g_renderUs / 1000), bleStateName(bleLastEvent()));
     fps_n = 0; t0 = millis();
   }
   delay(50);
