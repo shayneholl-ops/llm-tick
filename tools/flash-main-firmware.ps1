@@ -57,12 +57,26 @@ if (-not $port) { Write-Error "no new COM port appeared in 60 s. Re-check: BOOT 
 Write-Output "[flash] ROM download port found: $port"
 
 # --- flash all four images at their huge_app.csv offsets ---
-& $esp --chip esp32s3 --port $port --baud 921600 write_flash --flash_mode qio --flash_freq 80m `
+# NOTE (2026-10-02): do NOT add --flash_mode / --flash_freq / --flash_size here. On this
+# unit those flags OVERRIDE the image header rather than acting as a no-op: a requested
+# `--flash_mode qio` landed on flash as 0x00 (DIO) and `--flash_size 16MB` rewrote the
+# size nibble, leaving a bootloader whose mode byte disagreed with the build — the board
+# then sat in ROM download mode. A plain write_flash writes the header byte-for-byte
+# correctly (verified by read-back: 0xE9 0x03 0x02 0x3F == bootloader.bin).
+& $esp --chip esp32s3 --port $port --baud 921600 write_flash `
    0x0      $needed.bootloader `
    0x8000   $needed.partitions `
    0xe000   $needed.boot_app0 `
    0x10000  $needed.firmware
 if ($LASTEXITCODE -ne 0) { Write-Error "esptool failed (exit $LASTEXITCODE)"; exit 3 }
+Write-Output "[flash] verifying all four images..."
+& $esp --chip esp32s3 --port $port --baud 921600 verify_flash `
+   0x0      $needed.bootloader `
+   0x8000   $needed.partitions `
+   0xe000   $needed.boot_app0 `
+   0x10000  $needed.firmware
 
-Write-Output "[flash] DONE — firmware written. Unplug & replug the cable (or tap RESET) to boot it."
-Write-Output "[flash] verify: board boots the usage/weather scenes and does NOT type. Serial markers: '[tick] booting', 'TYPE <text> types via bridge'."
+Write-Output "[flash] DONE — firmware written + verified."
+Write-Output "[flash] NOTE: the S3 may stay in ROM download mode; the app can take ~20 s to print"
+Write-Output "[flash]       '[tick] WiFi UP' on its console. LISTEN before assuming failure."
+Write-Output "[flash] Console is COM4 under ARDUINO_USB_MODE=1: python tools/monitor-com.py COM4"

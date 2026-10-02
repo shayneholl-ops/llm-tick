@@ -62,10 +62,20 @@ if (-not $port) {
 
 Write-Output ""
 Write-Output "[flash] ROM port = $port  -> writing 4 images"
-& $esp --chip esp32s3 --port $port --baud 921600 write_flash --flash_mode qio --flash_freq 80m `
+# NOTE (2026-10-02): no --flash_mode/--flash_freq/--flash_size here — on this unit those
+# flags override the image header instead of being a no-op and leave a bootloader whose
+# flash-mode byte disagrees with the build (board ends up stuck in ROM download mode).
+& $esp --chip esp32s3 --port $port --baud 921600 write_flash `
     0x0     $imgs.bootloader `
     0x8000  $imgs.partitions `
     0xe000  $imgs.boot_app0 `
     0x10000 $imgs.firmware
 if ($LASTEXITCODE -ne 0) { Write-Error "esptool failed (exit $LASTEXITCODE)"; exit 3 }
-Write-Output "[flash] DONE. Unplug/replug USB-C (or tap RESET) to boot the new firmware."
+Write-Output "[flash] verifying..."
+& $esp --chip esp32s3 --port $port --baud 921600 verify_flash `
+    0x0     $imgs.bootloader `
+    0x8000  $imgs.partitions `
+    0xe000  $imgs.boot_app0 `
+    0x10000 $imgs.firmware
+Write-Output "[flash] DONE + verified. The app may take ~20 s to print '[tick] WiFi UP'."
+Write-Output "[flash] Console is COM4: python tools/monitor-com.py COM4"
