@@ -1,19 +1,42 @@
 # Implementation Plan — Keychron BLE→USB receiver + Web WIFI/BLE provisioning
 
+> ## ⚠️ STATUS 2026-10-02 — **F1 (BLE keyboard receiver) is DROPPED. Only F2 (web provisioning) remains.**
+> **Reason:** the Keychron K8 is a Bluetooth **Classic (BR/EDR)** keyboard and the **ESP32-S3 has no
+> Classic radio** (Wi-Fi + Bluetooth 5 **LE** only). The two cannot interoperate at any layer, so no
+> BLE-central change can make the K8 work. Proof: `HANDOFF.md` item 24 (Windows keeps the K8 only in the
+> `BTHPORT` Classic store, never in `BTHLEEnum`; a genuine BLE HID mouse/keyboard on the same PC *do*
+> enumerate under `BTHLE` with service `0x1812`, so the absence is the K8's property; two independent
+> scanners saw ~40 advertisers per pairing window and zero HID advertisers; Espressif lists no BR/EDR).
+>
+> **Consequences of the drop (user decision 2026-10-02):**
+> - F1's code was removed: `src/ble_host.{h,cpp}`, the `USBHIDKeyboard` bridge and the `TYPE`/`BLEP`
+>   serial commands in `src/main.cpp`, and the `NimBLE-Arduino` dependency. `platformio.ini` returned to
+>   `ARDUINO_USB_MODE=1` (USB-Serial/JTAG console, no TinyUSB composite, no HID keyboard).
+> - WiFi fetching was **restored** in `setup()` (it had been disabled on 2026-09-30 to isolate BLE).
+> - Recover F1 if ever needed: `git show 61373e9` (bridge) and `6dc4fcc` (match-mode work);
+>   `spike/` + `spike_hid_src/` are in `61373e9` too — deleted from the tree, not lost.
+> - **F1 could still be revived** by (a) a BLE HID keyboard (Keychron K Pro / K Max / K3 Pro, or any
+>   generic BLE HID keyboard) — the removed code works unchanged; (b) verifying against a synthetic BLE
+>   HID peer (a second ESP32-S3 acting as a BLE HID *peripheral*); or (c) an ESP32-C3/S3 + BR/EDR-capable
+>   board (original ESP32 / WROVER) if the K8 itself must be the keyboard.
+>
+> The F1 and R1 text below is kept as historical design record. **F2 is unaffected and is the live work.**
+
 Target: **llm-tick** firmware on the Waveshare **ESP32-S3-LCD-1.47B** (ST7789 172×320, 8 MB PSRAM,
 16 MB flash, native USB-C, PlatformIO/Arduino, `espressif32@7.0.1`).
 Research backing: `.scratch/research/feature1-ble-keyboard-usb-bridge.md` (F1) and
 `.scratch/research/feature2-web-provisioning.md` (F2).
 
 **Two features, one approval:**
-1. **Keychron BLE receiver** — the board becomes a "USB Bluetooth receiver" for a Keychron K-series
-   keyboard: keyboard pairs to the S3 over **BLE (S3 = central/host)**; S3 re-emits keystrokes to the
-   PC over **native USB-C as a standard USB HID keyboard**.
+1. **Keychron BLE receiver** — ⛔ **DROPPED 2026-10-02, hardware-impossible with a K8** (see the status
+   block above). Historical design follows.
 2. **Web WIFI + BLE provisioning** — a web page (board opens a **SoftAP**, draws a **QR on the LCD**
    the phone scans) to reconfigure the **home WiFi** without reflashing and to manage the **BLE keyboard**
-   pairing — so the board is usable away from home.
+   pairing — so the board is usable away from home. ← **the live feature**
 
-User-confirmed choices: keyboard = **Keychron K series**; provisioning UX = **QR on the LCD → setup AP → web page**.
+User-confirmed choices: provisioning UX = **QR on the LCD → setup AP → web page**. (The keyboard choice
+was "Keychron K series"; that half is now moot — see above. F2's BLE section should be re-scoped or
+dropped when F2 is implemented.)
 
 ---
 
@@ -75,8 +98,9 @@ and `PRESS` scene-cycling still works.
 - **R3 Coexistence RAM/CPU** — NimBLE over `esp_bt`; pin render and BLE to different cores; test under load.
 - **R4 Keyboard quirks** — Keychron Just-Works; pairing window ~3 min (spot-check the official PDF);
   connection interval ~7.5–15 ms (bridge adds ~10–30 ms end-to-end — fine for typing).
+  ⛔ **R4 named the wrong risk** — see below. The blocker was the radio protocol, not the window.
 
-### ⛔ F1 BLOCKED BY HARDWARE (2026-10-02) — read before touching F1
+### ⛔ F1 BLOCKED BY HARDWARE → **DROPPED** (2026-10-02)
 **The Keychron K8 is a Bluetooth *Classic* (BR/EDR) keyboard, and the ESP32-S3 has no Classic radio.**
 The two cannot interoperate at any layer, so no BLE-central change can make the K8 work. Measured
 evidence (full detail in `HANDOFF.md` item 24):
@@ -84,20 +108,19 @@ evidence (full detail in `HANDOFF.md` item 24):
 - Windows' **Classic** pairing store `HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices`
   holds `dc2c26ead3e5 => Keychron K8` (`DC:2C:26:EA:D3:E5`, Telink OUI); the **BLE** store
   `...\BTHLEEnum\Parameters\Devices` is **empty**.
+- **Positive control:** genuine BLE HID devices on the same PC (`MX Master`, `X116 BT1`) **do** enumerate
+  under `BTHLE` with service `0x1812` — so the K8's absence is a property of the K8, not the scanner.
 - Across several `Fn+B1` pairing windows, two independent scanners (the Windows WinRT LE watcher and the
-  board's NimBLE central) each saw ~50 advertisers and **zero** advertising HID service `0x1812`.
+  board's NimBLE central) each saw ~40 advertisers and **zero** advertising HID service `0x1812`.
 - Espressif: ESP32-S3 = "2.4 GHz Wi-Fi and Bluetooth® 5 (**LE**)" only — BR/EDR was dropped.
 
-**R4 above is the wrong risk.** The blocker is the radio protocol, not the pairing window. Choose one:
-1. **Use a BLE HID keyboard** (Keychron **K Pro / K Max / K3 Pro**, or any generic BLE HID keyboard) — the
-   existing F1 code then works unchanged. ← cheapest, recommended
-2. **Verify against a synthetic BLE HID peer** — an ESP32-S3 *can* be a BLE HID **peripheral**; flash a
-   second S3 with a HID-over-GATT keyboard emulator and drive board #1 → USB → PC. Proves every line of F1
-   except "the peer is a Keychron". Needs a second board. ← best way to de-risk the code without a keyboard
-3. **Change the board** to one with BR/EDR (original ESP32 / ESP32-WROVER + Bluedroid HID Host) if the K8
-   itself must be the keyboard — abandons the S3 display pipeline. ← most expensive
+**Decision (user, 2026-10-02): F1 removed, F2 proceeds.** To revive F1 later, any of: a BLE HID keyboard
+(Keychron **K Pro / K Max / K3 Pro**, or any generic BLE HID keyboard — the removed code works unchanged);
+a **synthetic BLE HID peer** (a second ESP32-S3 acting as a BLE HID *peripheral*); or a **BR/EDR-capable
+board** (original ESP32 / ESP32-WROVER + Bluedroid HID Host) if the K8 itself must be the keyboard.
+The status block at the top of this file records exactly what was removed and how to recover it.
 
-F2 (web provisioning) is **unaffected** by this blocker and can proceed independently.
+F2 (web provisioning) is **unaffected** by this blocker and is now the only live feature.
 
 ---
 
@@ -120,18 +143,21 @@ F2 (web provisioning) is **unaffected** by this blocker and can proceed independ
 3. **Phone** scans the QR (auto-joins the AP), opens the page, submits **SSID + password** (+ optional
    keyboard-pair action). Board writes NVS, sets the `prov` flag, **shuts the SoftAP off**, (re)connects STA.
 
-### BLE half of the page
-- The page's second section manages the **Keychron** pairing: **[Pair]** (start scan+connect; you press
-  `Fn+B1` on the keyboard), **[Status/RSSI]**, **[Unpair]**. This is **web UI over the same NimBLE central**
-  as Feature 1 — no second BLE mechanism. Driven on the BLE task so it never blocks the render core.
+### BLE half of the page — ⚠️ RE-SCOPE (F1 dropped 2026-10-02)
+- **Original:** the page's second section manages the **Keychron** pairing: **[Pair]** (start scan+connect;
+  you press `Fn+B1` on the keyboard), **[Status/RSSI]**, **[Unpair]** — web UI over the same NimBLE central
+  as Feature 1.
+- **Now:** since the K8 is Classic BR/EDR and F1 is dropped, **there is no keyboard to manage**. Drop this
+  section, or keep it only if a BLE HID keyboard is later adopted (it would then need the NimBLE central
+  re-added from `61373e9`). **The WiFi-provisioning half is unaffected** and is the whole of F2 as scoped.
 
 ### Code changes
-- **New:** `src/prov.cpp/.h` (SoftAP + WebServer + QR + NVS load/save); `src/ble_host.cpp/.h` (NimBLE
-  central + HID-over-GATT client + pairing state machine — **shared with Feature 1**); vendor **uQRCode**
-  (tiny, dependency-free QR encoder; `WIFI:` string fits QR v4–5, ~4 px/module → scannable on 172×320).
+- **New:** `src/prov.cpp/.h` (SoftAP + WebServer + QR + NVS load/save); vendor **uQRCode** (tiny,
+  dependency-free QR encoder; `WIFI:` string fits QR v4–5, ~4 px/module → scannable on 172×320).
+  ~~`src/ble_host.cpp/.h`~~ — **no longer needed** (F1 dropped; the provisioning page is WiFi-only).
 - **Edit:** `src/data.cpp::wifiInit()` (NVS-first credentials + enter-provisioning fallback); `src/main.cpp`
-  (setup/loop hooks, a provisioning UI scene, re-home `Serial`/`PRESS` per F1); `platformio.ini`
-  (`ARDUINO_USB_MODE=2`, `ARDUINO_USB_CDC_ON_BOOT=0`, add NimBLE-Arduino + uQRCode to `lib_deps`).
+  (setup/loop hooks, a provisioning UI scene); `platformio.ini` (**add uQRCode to `lib_deps` only** —
+  the F1-era `ARDUINO_USB_MODE`/`NimBLE` changes were reverted on 2026-10-02).
 - `secrets.h` becomes the **factory default only** (NVS overrides at runtime).
 
 ### Security / robustness
@@ -144,18 +170,16 @@ F2 (web provisioning) is **unaffected** by this blocker and can proceed independ
 ## Cross-cutting risks & mitigations
 | Risk | Mitigation |
 |---|---|
-| **R1** USB PHY handoff removes COM4 auto-flash + running serial | Verify in F1 spike; re-home console to UART0; document BOOT+reset download-mode flashing |
-| **R2** No turnkey BLE HID host (`esp_hid` bug) | Hand-rolled NimBLE GATT client; `JimGat/CYM` reference; chunked report-map reads |
-| **R3** BLE + WiFi + render coexistence load | NimBLE (not `esp_bt`); pin render & BLE to different cores; load-test (keep poll < ~10/min) |
-| **R4** Keychron pairing-window / interval quirks | Prompt scan/connect state machine; ~3-min window; auto-reconnect + re-subscribe; WS2812 link status |
-| **RAM** | Budget ~150–250 KB internal SRAM for the NimBLE host; PSRAM (8 MB) holds the framebuffers |
+| **R1** USB PHY handoff removes COM4 auto-flash + running serial | ~~F1 only~~ — **moot**, F1 dropped: `ARDUINO_USB_MODE=1` keeps the normal USB-Serial/JTAG console |
+| **R2** No turnkey BLE HID host (`esp_hid` bug) | ~~F1 only~~ — **moot**, F1 dropped |
+| **R3** BLE + WiFi + render coexistence load | ~~F1 only~~ — **moot**, F1 dropped. (F2's SoftAP-only provisioning is WiFi, not BLE) |
+| **R4** Keychron pairing-window / interval quirks | ⛔ **VOID** — superseded by the hardware blocker: the K8 is Classic BR/EDR and the S3 is BLE-only |
+| **RAM** | ~~~150–250 KB for the NimBLE host~~ — not needed with F1 dropped (measured: dropping NimBLE took RAM 18.7 % → 16.3 %) |
 
 ## Proposed build order
-1. ~~**F1-USB-HID spike** (verify the PHY handoff + download-mode flashing)~~ — **DONE (pre-approval,
-   `spike/hid-composite/` v3)**: MODE=0 composite keeps console + HID on one port; download-mode flashing
-   proven (v3 was uploaded via BOOT+reset).
-2. **F1-BLE central + bridge** (pair, type end-to-end).
-3. **F2 provisioning** (NVS + SoftAP + Web + QR + BLE section).
+1. ~~**F1-USB-HID spike**~~ — moot (F1 dropped); artifacts were in `spike/hid-composite/`, recoverable from `61373e9`.
+2. ~~**F1-BLE central + bridge**~~ — ⛔ **DROPPED 2026-10-02** (hardware blocker). Code recoverable from `61373e9`/`6dc4fcc`.
+3. **F2 provisioning** (NVS + SoftAP + Web + QR). ← **the live work**
 4. **Integration:** coexistence stress test, on-PC + on-board verification, update `README.md` / `HANDOFF.md`
    (new flashing procedure, provisioning flow, BLE section).
 
