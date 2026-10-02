@@ -259,6 +259,7 @@ void checkButton() {
 // Serial test hook: a "PRESS" line over USB-serial emulates a BOOT button press.
 // DIAGNOSTIC (2026-09-19): also "LED 0|1", "BL 0|25|50|100", "PAT 0..6", "ST".
 // DIAGNOSTIC (2026-09-25): "WXB [0..5]" picks the weather background.
+// "BLEP [prefix]" sets the BLE keyboard match (no arg = any HID device).
 void checkSerialCmd() {
   static char buf[16];
   static int n = 0;
@@ -321,6 +322,13 @@ void checkSerialCmd() {
         Serial.printf("[diag] scene=%d(%s) bg=%d(%s) blDuty=%d led=%d pat=%d wxn=%d render=%lums\n",
                       g_scene, sceneName(g_scene), g_wxBg, wxBgName(g_wxBg), g_diagBlDuty, g_diagLed,
                       g_diagPat, (int)g_wxNightForce, (unsigned long)(g_renderUs / 1000));
+      }
+      // BLEP [prefix] — set the BLE keyboard match mode. No/blank argument =
+      // "any" (first device advertising 0x1812, or an unnamed pure-HID device).
+      // With a prefix (e.g. "K8", "K?"), the name must also start with it.
+      else if (n >= 4 && strncmp(buf, "BLEP", 4) == 0) {
+        if (n >= 5 && buf[4]) bleSetMatchMode(BLE_MATCH_PREFIX, buf + 4);
+        else                 bleSetMatchMode(BLE_MATCH_ANY, "");
       }
       // TYPE <text> — emulate the keyboard via the BLE→USB bridge chain
       // (self-test hook; the original auto-typing spur-of-the-moment build that

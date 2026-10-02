@@ -40,6 +40,13 @@ typedef enum {
 // `report` points to the raw 0x2A4D notification payload; len is its size.
 typedef void (*ble_report_cb_t)(const uint8_t* report, uint16_t len);
 
+// How the scanner picks the keyboard: "any" accepts the first device
+// advertising the Generic HID service (0x1812), whatever its name; "prefix"
+// requires the name to start with the configured prefix too. "any" is the
+// default — Keychron K-series advertise model-only names ("K8", "K2", ...)
+// or not at all.
+typedef enum { BLE_MATCH_ANY = 0, BLE_MATCH_PREFIX } ble_match_mode_t;
+
 void bleInit(ble_report_cb_t onReport);
 void bleStartScan(void);
 void bleStopScan(void);
@@ -48,6 +55,7 @@ void bleDisconnect(void);
 void bleTick(void);
 ble_state_t bleLastEvent(void);
 const char* bleStateName(ble_state_t s);
+void bleSetMatchMode(ble_match_mode_t m, const char* prefix);  // "" = any name
 
 #ifdef __cplusplus
 }

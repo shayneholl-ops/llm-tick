@@ -76,6 +76,29 @@ and `PRESS` scene-cycling still works.
 - **R4 Keyboard quirks** — Keychron Just-Works; pairing window ~3 min (spot-check the official PDF);
   connection interval ~7.5–15 ms (bridge adds ~10–30 ms end-to-end — fine for typing).
 
+### ⛔ F1 BLOCKED BY HARDWARE (2026-10-02) — read before touching F1
+**The Keychron K8 is a Bluetooth *Classic* (BR/EDR) keyboard, and the ESP32-S3 has no Classic radio.**
+The two cannot interoperate at any layer, so no BLE-central change can make the K8 work. Measured
+evidence (full detail in `HANDOFF.md` item 24):
+
+- Windows' **Classic** pairing store `HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices`
+  holds `dc2c26ead3e5 => Keychron K8` (`DC:2C:26:EA:D3:E5`, Telink OUI); the **BLE** store
+  `...\BTHLEEnum\Parameters\Devices` is **empty**.
+- Across several `Fn+B1` pairing windows, two independent scanners (the Windows WinRT LE watcher and the
+  board's NimBLE central) each saw ~50 advertisers and **zero** advertising HID service `0x1812`.
+- Espressif: ESP32-S3 = "2.4 GHz Wi-Fi and Bluetooth® 5 (**LE**)" only — BR/EDR was dropped.
+
+**R4 above is the wrong risk.** The blocker is the radio protocol, not the pairing window. Choose one:
+1. **Use a BLE HID keyboard** (Keychron **K Pro / K Max / K3 Pro**, or any generic BLE HID keyboard) — the
+   existing F1 code then works unchanged. ← cheapest, recommended
+2. **Verify against a synthetic BLE HID peer** — an ESP32-S3 *can* be a BLE HID **peripheral**; flash a
+   second S3 with a HID-over-GATT keyboard emulator and drive board #1 → USB → PC. Proves every line of F1
+   except "the peer is a Keychron". Needs a second board. ← best way to de-risk the code without a keyboard
+3. **Change the board** to one with BR/EDR (original ESP32 / ESP32-WROVER + Bluedroid HID Host) if the K8
+   itself must be the keyboard — abandons the S3 display pipeline. ← most expensive
+
+F2 (web provisioning) is **unaffected** by this blocker and can proceed independently.
+
 ---
 
 ## Feature 2 — Web WIFI + BLE provisioning

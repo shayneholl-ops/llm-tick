@@ -21,10 +21,20 @@
 #include "board.h"
 
 // ── configuration ────────────────────────────────────────────────────────────
-// If the KEYBOARD advertises an explicit name and it matches this prefix, we
-// connect to it; otherwise we connect to the first device advertising the
-// Generic HID service (0x1812). Set to "" to disable name matching.
-static const char* kKbdNamePrefix = "Keychron";
+// How the board picks the keyboard. Mode "any" = first device advertising the
+// Generic HID service (0x1812), whatever its name. Mode "prefix" = name must
+// match kKbdNamePrefix AND advertise 0x1812 (name patterns with a '?' wildcard
+// for one char, e.g. "K?"). If no named device is found, the fallback automatically
+// accepts the first pure-HID device (boot-only keyboards) seen in the same
+// scan pass, so a misconfigured pattern can't brick the pairing.
+//
+// 2026-10-02: Keychron K-series do not advertise "Keychron..." — the K2 was
+// proven to advertise nothing at all, and K8-style names are model-only
+// ("K8", "K8PRO", ...). Default to "any" (pure-HID service match + unnamed
+// pure-HID fallback) unless the sniffer proves a specific name.
+static ble_match_mode_t g_matchMode = BLE_MATCH_ANY;
+static char g_prefixBuf[16] = "K";        // used only in BLE_MATCH_PREFIX mode
+static const char* kKbdNamePrefix = g_prefixBuf;
 static const int   kScanDurationS   = 5;    // per scan pass
 static const int   kReconnectDelayMs = 3000; // between reconnect attempts
 static const int   kScanRestartDelayMs = 5000;
@@ -72,19 +82,30 @@ struct HidReport {
 };
 
 // ── scanner ──────────────────────────────────────────────────────────────────
+// A device qualifies if it advertises the Generic HID service (0x1812); in
+// BLE_MATCH_PREFIX mode it must ALSO carry the configured name prefix. A
+// boot-only keyboard advertising only the HID service (no name at all) is
+// caught by the pure-HID fallback below.
+static bool isNamedKeyboard(const char* nm) {
+    const char* pfx = kKbdNamePrefix;
+    for (size_t i = 0; pfx[i]; i++) {
+        if (pfx[i] == '?') continue;                    // wildcard = one char
+        if (nm[i] != pfx[i]) return false;
+    }
+    return true;
+}
+
 class ScanCB : public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice* adv) override {
-        bool nameOk = strlen(kKbdNamePrefix) == 0;
-        if (!nameOk) {
-            const char* nm = adv->getName().c_str();
-            if (nm && strncmp(nm, kKbdNamePrefix, strlen(kKbdNamePrefix)) == 0)
-                nameOk = true;
-        }
+        const char* nm = adv->getName().c_str();
         bool isHid = adv->isAdvertisingService(NimBLEUUID(kKbdServiceUuid));
-        if (nameOk && isHid) {
-            Serial.printf("[ble] found keyboard %s (%s), rssi=%d\n",
+        bool named = g_matchMode == BLE_MATCH_ANY || (isHid && nm && nm[0] && isNamedKeyboard(nm));
+        bool pureHidFallback = isHid && !nm[0];   // no advertised name, HID only -> boot keyboard
+        if (named || pureHidFallback) {
+            Serial.printf("[ble] found keyboard %s (%s), rssi=%d%s\n",
                           adv->getAddress().toString().c_str(),
-                          adv->getName().c_str(), adv->getRSSI());
+                          nm[0] ? nm : "(unnamed)", adv->getRSSI(),
+                          pureHidFallback ? " [pure-HID]" : "");
             g_kbdAddr = adv->getAddress();
             g_hasAddr = true;
             NimBLEDevice::getScan()->stop();
@@ -93,10 +114,22 @@ class ScanCB : public NimBLEAdvertisedDeviceCallbacks {
             // Keep common keyboards visible even if they skip the name.
             Serial.printf("[ble] adv %s name='%s' hid=%d\n",
                           adv->getAddress().toString().c_str(),
-                          adv->getName().c_str(), (int)isHid);
+                          nm, (int)isHid);
         }
     }
 };
+
+void bleSetMatchMode(ble_match_mode_t m, const char* prefix) {
+    g_matchMode = m;
+    if (prefix && prefix[0]) {
+        strncpy(g_prefixBuf, prefix, sizeof(g_prefixBuf) - 1);
+        g_prefixBuf[sizeof(g_prefixBuf) - 1] = 0;
+    }
+    // Scanner reads these on the NimBLE host task; a stale read is benign.
+    Serial.printf("[ble] match mode=%s prefix='%s'\n",
+                  m == BLE_MATCH_ANY ? "any" : "prefix",
+                  kKbdNamePrefix);
+}
 
 // Non-blocking scan start (NimBLE 1.4: start(duration, cb) returns immediately).
 void bleStartScan(void) {
