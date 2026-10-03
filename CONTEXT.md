@@ -67,4 +67,16 @@ The values in `secrets.h`. They are what a Board with no provisioned values uses
 they are never the source of truth once Provisioning has run.
 _Avoid_: default config, fallback values
 
+**Config seam**:
+The one place the firmware asks for a configuration value, so no consumer needs to know
+whether it came from the Factory default or from Provisioning. Code prefix `cfg`.
+_Avoid_: settings, options, prefs
+
+**Unset** vs **empty**:
+An *unset* configuration field has no stored value, so the Factory default applies. An
+*empty* field was deliberately stored as empty and does **not** fall back. The two are
+distinct states and must never be conflated.
+_Avoid_: blank (ambiguous), missing
+
+
 

@@ -26,3 +26,6 @@ usage.jsonl
 # BLE/USB-bridge one-off spikes (validated R1 in PLAN, not part of the built firmware)
 spike/
 spike_hid_src/
+
+# host test build artifacts (tools/configtest)
+tools/configtest/*.exe

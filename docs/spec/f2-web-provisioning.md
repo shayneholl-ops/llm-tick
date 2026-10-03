@@ -9,9 +9,17 @@ Today every value the Board needs is a compile-time macro in `secrets.h`:
 | Setting | Macro | Runtime-changeable? |
 |---|---|---|
 | WiFi SSID / password | `WIFI_SSID` / `WIFI_PASS` | no |
-| Server address | `SERVER_HOST` / `SERVER_IP_OCTETS` | no |
+| Server address | `SERVER_HOST` / `SERVER_IP_A..D` | no |
 | Weather location | `WEATHER_LOCATION` | no |
 | Weather API key | `WEATHER_API_KEY` | **stays compile-time (out of scope)** |
+
+> **Note (2026-10-02, ticket #1):** the Server IP is now four octet macros
+> (`SERVER_IP_A..D`) rather than one comma-separated `SERVER_IP_OCTETS`, because the
+> Config seam needs it as *text* and the preprocessor cannot stringify a
+> comma-separated macro (it reads the commas as argument separators). `secrets.h`
+> derives `SERVER_IP_TEXT` from the octets for the seam to consume. Consumers never
+> read these macros directly — they ask the Config seam.
+
 
 Changing any of them means editing a gitignored header and reflashing over a BOOT+RESET
 window. Two motives drive F2, and both are real:

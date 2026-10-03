@@ -1,7 +1,7 @@
 // data.cpp — connectivity + the data brain: mDNS discovery, JSON poll of
 // server.py, idle->standby switching, weather refresh, wifi backstop.
 #include "tick.h"
-#include "secrets.h"
+#include "config.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
@@ -18,7 +18,6 @@ static IPAddress g_serverIp;
 static String   g_serverUrl;
 static unsigned long g_reconnectBackoff = 15000;
 static unsigned long g_lastReconnect = 0;
-static const IPAddress kFallbackIp(SERVER_IP_OCTETS);
 
 // ponytail: 60s poll is a hard cap; server.py caches 180s server-side anyway.
 const unsigned long FETCH_INTERVAL = 60000;
@@ -31,7 +30,7 @@ void wifiInit() {
   WiFi.setMinSecurity(WIFI_AUTH_WEP);
   WiFi.setAutoReconnect(true);
   WiFi.setTxPower(WIFI_POWER_13dBm);   // S3s fail auth at full TX power
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(cfgWifiSsid(), cfgWifiPass());
   int tries = 0;
   // NOTE: do NOT draw through the panel `lcd` here — a text op on the panel
   // triggers flush(), which sends the panel's own (empty) buffer to the screen
@@ -53,12 +52,30 @@ void ntpWait() {
 }
 
 bool resolveServer() {
-  IPAddress found = MDNS.queryHost(SERVER_HOST, 3000);
-  g_serverIp = (uint32_t)found != 0 ? found : kFallbackIp;
-  g_serverUrl = "http://" + g_serverIp.toString() + ":" + String(SERVER_PORT) + "/usage";
-  Serial.printf("[mDNS] %s.local -> %s%s\n", SERVER_HOST, g_serverIp.toString().c_str(),
-                (uint32_t)found != 0 ? "" : "  (no answer, using fallback)");
-  return (uint32_t)found != 0;
+  const char* host = cfgServerHost();
+  IPAddress found = MDNS.queryHost(host, 3000);
+  bool resolved = (uint32_t)found != 0;
+  if (resolved) {
+    g_serverIp = found;
+  } else if (cfgServerIpIsSet()) {
+    // A static IP is configured (or nothing was ever stored, in which case the Factory
+    // default still applies), so fall back to it.
+    unsigned char oct[4];
+    cfgServerIpOctets(oct);
+    g_serverIp = IPAddress(oct[0], oct[1], oct[2], oct[3]);
+  } else {
+    // The static IP was explicitly cleared, so there is deliberately NO fallback.
+    // Clear the URL too: leaving the previous one in place would send fetches to a
+    // stale address — the exact "silently wrong server" failure this rule exists to
+    // prevent. An empty g_serverUrl makes fetchUsage() fail visibly instead.
+    g_serverUrl = "";
+    Serial.printf("[mDNS] %s.local did not resolve and no static IP is configured\n", host);
+    return false;
+  }
+  g_serverUrl = "http://" + g_serverIp.toString() + ":" + String(cfgServerPort()) + "/usage";
+  Serial.printf("[mDNS] %s.local -> %s%s\n", host, g_serverIp.toString().c_str(),
+                resolved ? "" : "  (no answer, using the configured static IP)");
+  return resolved;
 }
 
 static void copyStr(char* dst, size_t n, const String& s) {
@@ -138,6 +155,13 @@ static void parseUsage(const String& payload) {
 
 void fetchUsage() {
   if (WiFi.status() != WL_CONNECTED) return;
+  // No server URL means resolveServer() found no address AND no static fallback was
+  // configured. Fail visibly rather than calling http.begin("") on an empty string.
+  if (g_serverUrl.length() == 0) {
+    g_u.stale = true;
+    Serial.println("[tick] no server address (mDNS failed, no static IP configured)");
+    return;
+  }
   HTTPClient http;
   http.setConnectTimeout(8000);
   http.setTimeout(10000);
