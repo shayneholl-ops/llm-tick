@@ -27,8 +27,9 @@ usage.jsonl
 spike/
 spike_hid_src/
 
-# host test build artifacts (tools/configtest)
+# host test build artifacts (tools/configtest, tools/qrtest)
 tools/configtest/*.exe
+tools/qrtest/*.exe
 
 # ESP-IDF generated sdkconfig (per-env, regenerated from sdkconfig.defaults)
 sdkconfig.*
