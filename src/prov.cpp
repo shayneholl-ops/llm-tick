@@ -399,12 +399,17 @@ void provRender(uint16_t* buf, int w, int h) {
     const uint16_t bg  = sw(kBgLogical);
     const uint16_t ink = sw(kInkLogical);
 
-    // Bind the sprite to this frame's buffer BEFORE drawing any text through it.
-    // renderUiScene() does exactly this; skipping it leaves uiSpr pointing at the
-    // PREVIOUS frame (or at nothing on the first Provisioning frame), and the font
-    // calls then fault. Omitting this line crashed the Board with a StoreProhibited
-    // panic (EXCVADDR 0x0b) on the first Provisioning render.
-    uiSpr->setBuffer(buf, w, h, 16);
+    // NO uiSpr->setBuffer() here — see the long note in ui.cpp::renderUiScene().
+    // uiSpr is sprites[idx] and `buf` IS its own createSprite() buffer, so re-binding it
+    // makes LGFX_Sprite::setBuffer() call deleteSprite() -> release() -> heap_free() on a
+    // LIVE buffer, then re-adopt the dangling pointer. That is a use-after-free and it
+    // corrupted the heap (crash inside tlsf_free/remove_free_block).
+    //
+    // An earlier attempt ADDED this setBuffer() call here to stop a StoreProhibited
+    // panic on the first Provisioning render. That was the wrong fix — it papered over
+    // the symptom by rebinding to an already-freed pointer that happened to still be
+    // mapped. With the buffer no longer being freed, the sprite is always valid and
+    // nothing needs binding.
 
     // FLAT background over the whole panel — no scene, maximum QR contrast.
     for (int y = 0; y < h; y++) fillRow(buf, w, y, bg);

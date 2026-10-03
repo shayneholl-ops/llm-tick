@@ -29,3 +29,13 @@ spike_hid_src/
 
 # host test build artifacts (tools/configtest)
 tools/configtest/*.exe
+
+# ESP-IDF generated sdkconfig (per-env, regenerated from sdkconfig.defaults)
+sdkconfig.*
+!sdkconfig.defaults
+
+# The ESP-IDF project skeleton PlatformIO writes when these are absent
+# (espidf.py: create_default_project_files() only writes them `if not os.path.isfile`).
+# We do not customise them, so they are generated artifacts, not sources.
+/CMakeLists.txt
+/src/CMakeLists.txt

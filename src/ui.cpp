@@ -1,6 +1,9 @@
 // ui.cpp — the two UI scenes, drawn into the active sprite framebuffer on core 0.
-// All drawing goes through `ui` (= uiSpr), whose buffer is bound to the current
-// frame via setBuffer(); the consumer's pushSprite then blits it to the panel.
+// All drawing goes through `ui` (= uiSpr). uiSpr is sprites[idx], whose buffer was
+// allocated once by createSprite() in setup() and already covers the whole Panel, so
+// the consumer's pushSprite blits it as-is. Do NOT re-bind it per frame with
+// setBuffer() — see renderUiScene() at the bottom of this file for why that is a
+// use-after-free.
 // (Drawing through the panel `lcd` directly would go to the panel's own buffer,
 //  which is never pushed — that was the black-screen bug.)
 #include "tick.h"
@@ -256,10 +259,17 @@ static void renderUsage(uint16_t* buf, int w, int h) {
 }
 
 static int wxIconGlyph(int code) {
-  if (code >= 7280) return 2; if (code >= 7120) return 3;
-  if (code >= 7010) return 4; if (code >= 6000) return 5;
-  if (code >= 5567) return 6; if (code >= 4020) return 7;
-  if (code >= 3000) return 8; return 9;
+  // One statement per line: the ESP-IDF build compiles with
+  // -Werror=misleading-indentation, and two `if`s on one line trip it. The Arduino
+  // build tolerated it, so this only surfaced when the mixed-framework env was added.
+  if (code >= 7280) return 2;
+  if (code >= 7120) return 3;
+  if (code >= 7010) return 4;
+  if (code >= 6000) return 5;
+  if (code >= 5567) return 6;
+  if (code >= 4020) return 7;
+  if (code >= 3000) return 8;
+  return 9;
 }
 static const char* kIcons[] = { "!", "~", "*", ":", "f", "=", "+", "o" };
 
@@ -491,8 +501,25 @@ static void renderWeather(uint16_t* buf, int w, int h) {
 }
 
 void renderUiScene(int scene, uint16_t* buf, int w, int h) {
-  // Bind this frame's buffer to the UI sprite, then draw. pushSprite blits it.
-  uiSpr->setBuffer(buf, w, h, 16);
+  // DO NOT call uiSpr->setBuffer(buf, ...) here.
+  //
+  // uiSpr is sprites[idx] and `buf` IS bufs[idx], which is that sprite's OWN buffer —
+  // allocated once by createSprite() in setup(). Re-binding it every frame is not just
+  // redundant, it is a use-after-free:
+  //
+  //   LGFX_Sprite::setBuffer()  ->  deleteSprite()  ->  SpriteBuffer::release()
+  //   SpriteBuffer::release()   ->  heap_free(_buffer)   when the source is not
+  //                                                      AllocationSource::Preallocated
+  //
+  // createSprite() allocates with a Heap source, so the first setBuffer() FREED the
+  // framebuffer and then re-adopted the dangling pointer as Preallocated. The sprite
+  // then drew into freed memory on every frame, which the allocator was free to hand to
+  // something else — silent heap corruption, surfacing much later as a crash inside
+  // tlsf_free/remove_free_block. Both LovyanGFX 1.2.29 and 1.2.32 behave this way; the
+  // Arduino build only survived it by heap-layout luck.
+  //
+  // The sprite already knows its size and buffer from createSprite(), so nothing needs
+  // binding here.
   if (scene == 0) renderUsage(buf, w, h);
   else renderWeather(buf, w, h);
 }

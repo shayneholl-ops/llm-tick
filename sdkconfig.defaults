@@ -1,0 +1,121 @@
+# llm-tick sdkconfig.defaults ? ONLY read by the ESP-IDF framework builder.
+#
+# WHY THIS FILE EXISTS: the Board panics when a client associates with the Setup AP.
+# The decoded backtrace is the WiFi driver's DYNAMIC RX buffer pool corrupting TLSF
+# heap metadata (HANDOFF.md item 5):
+#   ppTask -> wDev_ProcessRxSucData -> wDev_IndicateFrame -> esf_buf_alloc
+#     -> esf_buf_alloc_dynamic -> wifi_malloc -> tlsf_malloc -> block_locate_free
+#
+# The Arduino framework alone links a PREBUILT driver with DYNAMIC_RX_BUFFER_NUM=32,
+# and the Arduino builder never reads this file. Building with the espidf framework
+# present makes the platform compile the driver from IDF source, so these take effect
+# and the dynamic pool CEASES TO EXIST rather than merely being provoked less often.
+#
+# Verified valid in the installed IDF (components/esp_wifi/Kconfig: "range 0 128").
+
+# ── The WiFi RX pool: the actual bug fix ────────────────────────────────────────
+#
+# ⚠ THE NAMES DEPEND ON THE IDF VERSION, and getting them wrong fails SILENTLY —
+# kconfig ignores an unknown symbol, the build still succeeds, and the firmware just
+# does not have the fix. Verified against the IDF this env actually uses:
+#
+#   IDF 4.4.7 (framework-espidf@3.40407) -> CONFIG_ESP32_WIFI_*   <-- used here
+#   IDF 5.x   (framework-espidf@3.50301) -> CONFIG_ESP_WIFI_*
+#
+# PlatformIO pins the mixed arduino+espidf build to 4.4.7 (platform.py downgrades
+# "for mixed Arduino+IDF projects"), so the ESP32_ names are the correct ones here.
+# Confirm with: grep RX_BUFFER_NUM sdkconfig.esp32s3-idf
+
+# No dynamic RX buffers at all: every RX buffer is allocated up front, so the driver
+# never calls wifi_malloc() on the receive path. That call is what corrupted the heap.
+CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=0
+
+# The pool that replaces it. NOTE the Kconfig range is 2..25 in IDF 4.4.7 — a larger
+# value is rejected and SILENTLY falls back to the default (10), which is the same
+# silent-failure trap as the symbol names above. 25 (the maximum) gives the most
+# headroom so the fewest received frames are dropped now that there is no dynamic pool
+# to spill into.
+CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=25
+
+# Aggregation is what makes RX bursty, which is what corrupted the pool. Off.
+CONFIG_ESP32_WIFI_AMPDU_RX_ENABLED=n
+CONFIG_ESP32_WIFI_AMPDU_TX_ENABLED=n
+
+# REQUIRED when esp32-arduino is built as an IDF component: its CMakeLists hard-errors
+# with "esp32-arduino requires CONFIG_FREERTOS_HZ=1000". The Arduino core's
+# millis()/delay()/micros() timing assumes this tick rate.
+CONFIG_FREERTOS_HZ=1000
+
+# ── Arduino-as-component wiring ─────────────────────────────────────────────────
+# THE ONE THAT MATTERS: this option defaults to "n", and arduino-esp32's own
+# cores/esp32/main.cpp wraps ITS app_main() in `#if CONFIG_AUTOSTART_ARDUINO`
+# (line 22 .. 59). With it off, app_main is compiled out entirely and the link fails
+# with exactly:
+#   freertos/libfreertos.a(port_common.c.o): undefined reference to `app_main'
+# Autostart is also what makes setup()/loop() the entry points, and the Arduino
+# component's CMakeLists uses this flag to force-link them (-u _Z5setupv -u _Z4loopv).
+CONFIG_AUTOSTART_ARDUINO=y
+
+# Explicit, though the Kconfig default is IDF_TARGET (already esp32s3). PlatformIO
+# warns "Arduino framework as an ESP-IDF component doesn't handle the variant field!"
+# because it cannot pass the board's variant through, so pin it here instead.
+CONFIG_ARDUINO_VARIANT="esp32s3"
+
+# The loop task stack. Matches -DARDUINO_LOOP_STACK_SIZE=16384 in platformio.ini;
+# declaring it here too makes it authoritative rather than relying on the -D fallback
+# in main.cpp. 8 KB (the default) overflowed once the web server ran on this task.
+CONFIG_ARDUINO_LOOP_STACK_SIZE=16384
+
+# ── Hardware: the Waveshare board is 16 MB flash / 8 MB PSRAM ────────────────────
+# The IDF build defaults to 2 MB and warns "Flash memory size mismatch detected.
+# Expected 8MB, found 2MB" if this is left alone.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# QIO flash, matching board_build.arduino.memory_type = qio_opi and the eFuse.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# Octal PSRAM (the "opi" half of qio_opi).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# ── mbedTLS PSK: REQUIRED by Arduino's WiFiClientSecure ─────────────────────────
+#
+# THE SUBTLEST ONE, and the last link failure: arduino-esp32's
+# libraries/WiFiClientSecure/src/ssl_client.cpp puts its ENTIRE implementation inside
+#
+#   #if !defined(MBEDTLS_KEY_EXCHANGE__SOME__PSK_ENABLED) && \
+#       !defined(MBEDTLS_KEY_EXCHANGE_SOME_PSK_ENABLED)
+#   #  warning "Please call idf.py menuconfig ... Enable pre-shared-key ciphersuites"
+#   #else
+#       ... ssl_init, start_ssl_client, send_ssl_data, get_ssl_receive, data_to_read,
+#           stop_ssl_socket — everything ...
+#   #endif
+#
+# With PSK off the file compiles to an EMPTY object: it is archived, so the archive
+# looks complete, but `nm` shows the symbols as `U` and the link dies with
+#   undefined reference to `start_ssl_client(sslclient_context*, IPAddress const&, ...)`
+# — reached from HTTPClient, which constructs a WiFiClientSecure for its https path
+# (HTTPClient.cpp:74). We only ever fetch plain http:// URLs, but the symbols must
+# still exist for the link to succeed.
+#
+# The Arduino framework's own PREBUILT driver config has these on, which is why the
+# plain-Arduino build never hit this. CONFIG_MBEDTLS_PSK_MODES defaults to `n`.
+CONFIG_MBEDTLS_PSK_MODES=y
+CONFIG_MBEDTLS_KEY_EXCHANGE_PSK=y
+
+# ── Partition table ─────────────────────────────────────────────────────────────
+# NOT set here: the IDF builder reads board.build.partitions (set to partitions.csv in
+# platformio.ini) and falls back to a project-relative path. Declaring a custom name
+# here as well made the two disagree ("Missing partition table file 'huge_app.csv'").
+
+# 115200 to match the Arduino monitor and the documented console speed.
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# The console goes over the native USB-Serial/JTAG, matching ARDUINO_USB_MODE=1.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Leave the rest of the driver's defaults alone; only the RX path is the problem.

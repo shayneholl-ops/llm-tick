@@ -1,0 +1,20 @@
+# llm-tick partition table - used by BOTH build environments.
+#
+# The Arduino env selects it with board_build.partitions = partitions.csv; the ESP-IDF
+# builder resolves board.build.partitions the same way and falls back to a
+# project-relative path when the name is not one of the framework's own tables
+# (espidf.py: generate_partition_table). One file, both frameworks - no copy of a
+# vendor table living in the repo.
+#
+#   nvs      20 KB  - the Config seam's values and the Provisioning flag
+#   otadata   8 KB  - OTA bookkeeping (unused, but the IDF build expects it)
+#   app0       3 MB - the single application slot
+#   spiffs   896 KB - unused; this firmware has no filesystem
+#   coredump  64 KB - panic dumps, which is what makes a crash debuggable
+#
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x9000,   0x5000,
+otadata,  data, ota,      0xE000,   0x2000,
+app0,     app,  ota_0,    0x10000,  0x300000,
+spiffs,   data, spiffs,   0x310000, 0xE0000,
+coredump, data, coredump, 0x3F0000, 0x10000,
