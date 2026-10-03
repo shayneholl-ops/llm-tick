@@ -78,8 +78,7 @@ static void fillPattern(uint16_t* buf, int w, int h, int pat) {
       0xFFFF    // 8 white
     };
     for (int y = 0; y < h; y++) {
-      uint16_t v = wb565(bar[(y / 40) % 8]);
-      uint16_t c = (uint16_t)((v >> 8) | (v << 8));
+      uint16_t c = sw565(wb565(bar[(y / 40) % 8]));
       uint16_t* row = buf + (size_t)y * w;
       for (int x = 0; x < w; x++) row[x] = c;
     }
@@ -119,13 +118,19 @@ static void blTask(void*) {
   }
 }
 
+// The LED's colour is chosen by WHAT IS ON THE PANEL, not by a scene index. Provisioning
+// is not a scene — it overrides the render dispatch while the Setup AP is up — so it
+// used to be passed as the magic index 2 and caught by showLed's final `else`. Any
+// future index 2 would have silently rendered amber for the wrong reason. ProvLedScene
+// is a sentinel PROVING is not a scene index, so the fallback stays a real fallback.
+const int kProvLedSentinel = 2;
+
 void showLed(int s) {
   uint32_t c;
-  if (s == 0)      c = led.Color(0, 24, 24);   // usage: blue
-  else if (s == 1) c = led.Color(0, 20, 10);   // weather standby: soft green
-  else             c = led.Color(28, 14, 0);   // Provisioning: amber (unmistakable
-                                               //   beside both the blue and the green,
-                                               //   so setup mode reads at a glance)
+  if (s == 0)                    c = led.Color(0, 24, 24);   // usage: blue
+  else if (s == 1)               c = led.Color(0, 20, 10);   // weather standby: soft green
+  else if (s == kProvLedSentinel) c = led.Color(28, 14, 0);  // Provisioning: amber
+  else                           c = led.Color(28, 14, 0);   // unknown: same amber
   led.setPixelColor(0, c);
   led.show();
 }
@@ -147,14 +152,14 @@ void renderTask(void*) {
         // AWB anchor test: one half raw white (locks the camera's AWB at full
         // correction), the other half the corrected dark canvas the user
         // actually sees. Measured hue of the dark half = true residual cast.
-        uint16_t dk = (uint16_t)((wb565(0x18C3) >> 8) | (wb565(0x18C3) << 8));
+        uint16_t dk = sw565(wb565(0x18C3));
         for (int y = 0; y < SCREEN_H; y++) {
           uint16_t* row = bufs[idx] + (size_t)y * SCREEN_W;
           for (int x = 0; x < SCREEN_W / 2; x++) row[x] = 0xFFFF;
           for (int x = SCREEN_W / 2; x < SCREEN_W; x++) row[x] = dk;
         }
       } else {
-        uint16_t f = (uint16_t)((wbFields[g_wbField] >> 8) | (wbFields[g_wbField] << 8));
+        uint16_t f = sw565(wbFields[g_wbField]);
         for (int y = 0; y < SCREEN_H; y++) {
           uint16_t* row = bufs[idx] + (size_t)y * SCREEN_W;
           for (int x = 0; x < SCREEN_W; x++) row[x] = f;
@@ -450,6 +455,11 @@ void setup() {
   // state and survives a reset, and while it runs the radio belongs to the phone: a
   // boot fetch here would be a poll outside the gate, competing with the setup page.
   provRestoreIfSaved();
+  // Then the one automatic entry ADR-0001 sanctions: a Board that has NEVER been
+  // provisioned cannot connect to anything, so it offers the setup path immediately
+  // rather than retrying a network nobody gave it. A failure on an already-provisioned
+  // Board deliberately does NOT come through here — see the gate in tickLogic().
+  provEnterIfNeverProvisioned();
 
   if (!provActive()) {
     resolveServer();
@@ -460,7 +470,7 @@ void setup() {
   }
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
-  showLed(provActive() ? 2 : g_scene);   // amber if setup mode owns the Panel
+  showLed(provActive() ? kProvLedSentinel : g_scene);   // amber if Provisioning owns the Panel
   Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather");
 }
 

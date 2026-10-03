@@ -98,7 +98,7 @@ static uint16_t kPan[K_N];    // panel-ready (byte-swapped) for raw writes
 
 static inline uint16_t wp(int i) { return kPan[i]; }
 static inline uint16_t wl(int i) { return kLog[i]; }
-static inline uint16_t sw(uint16_t c) { return (uint16_t)((c >> 8) | (c << 8)); }
+static inline uint16_t sw(uint16_t c) { return sw565(c); }
 
 // ── drawing shim over the raw framebuffer ───────────────────────────────────
 // The render task is the only writer and runs on one core, so file-static

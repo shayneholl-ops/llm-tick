@@ -212,8 +212,8 @@ void tickLogic() {
   // this Board, and serving a page is a heavier, burstier load than polling ever was.
   // Suspending the poll also keeps the two network roles from interleaving.
   //
-  // The idle<->standby logic is skipped too, so Provisioning cannot be yanked away by
-  // a scene switch mid-setup. Reconnect backoff still runs: it is cheap and keeps the
+  // The standby transitions are skipped too, so Provisioning cannot be yanked away by
+  // a scene switch mid-flow. Reconnect backoff still runs: it is cheap and keeps the
   // STA link healthy for the credential test in ticket #4.
   if (provActive()) {
     // DO NOT call WiFi.reconnect() here. Provisioning runs AP-ONLY, so there is no

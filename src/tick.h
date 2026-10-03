@@ -53,6 +53,21 @@ static inline uint16_t wb565(uint16_t c) {
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+// Swap the two bytes of an RGB565 value.
+//
+// WHY IT IS NEEDED: this Panel is wired with the colour bytes reversed, so the
+// framebuffer is blitted raw and every logical colour must be swapped on the way in.
+// Settled on-glass with alternating 40-row representation bands: swapped rows matched
+// the LGFX-filled control, unswapped rows came out magenta (HANDOFF.md item 9b).
+//
+// It lives beside wb565() because the two are the same kind of thing: mandatory
+// per-unit colour correction applied at the point a colour is written. Note this is
+// NOT a white-balance transform — wb565() corrects the cast, sw565() fixes the wire
+// order. Both are required; neither substitutes for the other.
+static inline uint16_t sw565(uint16_t logical) {
+  return (uint16_t)((logical >> 8) | (logical << 8));
+}
+
 // ── Provided by main.cpp ─────────────────────────────────────────────────────
 extern LGFX lcd;
 extern LGFX_Sprite* sprites[2];
@@ -62,6 +77,11 @@ extern QueueHandle_t freeQ, readyQ;
 extern volatile int  g_scene;
 int    sceneCount();
 const char* sceneName(int s);
+// The LED colour follows what is on the Panel. Provisioning overrides the render
+// dispatch but is NOT a scene, so it is passed to showLed() as this sentinel rather
+// than as a scene index. It must stay >= sceneCount() so it can never collide with a
+// real scene.
+extern const int kProvLedSentinel;
 void showLed(int s);
 
 // ── ui.cpp ───────────────────────────────────────────────────────────────────

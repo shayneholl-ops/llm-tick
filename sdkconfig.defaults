@@ -39,6 +39,14 @@ CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=25
 
 # Aggregation is what makes RX bursty, which is what corrupted the pool. Off.
 CONFIG_ESP32_WIFI_AMPDU_RX_ENABLED=n
+
+# TX aggregation is ALSO disabled. The diagnosed crash is on the RECEIVE path, so this
+# setting is not justified by that diagnosis — it is here because an AP must emit
+# beacons, probe responses and, once a client joins, the ACKs and data for it, and
+# aggregated TX was not something we wanted newly varying while diagnosing an RX heap
+# bug. If a future measurement shows receive-path stability is solved, this is the
+# first setting worth re-testing as an independent revert: it costs TX throughput,
+# which Provisioning does not need but normal polling does.
 CONFIG_ESP32_WIFI_AMPDU_TX_ENABLED=n
 
 # REQUIRED when esp32-arduino is built as an IDF component: its CMakeLists hard-errors
@@ -118,4 +126,6 @@ CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 # The console goes over the native USB-Serial/JTAG, matching ARDUINO_USB_MODE=1.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
-# Leave the rest of the driver's defaults alone; only the RX path is the problem.
+# Leave the rest of the driver's defaults alone. The DIAGNOSIS was receive-path only
+# (the crash ended in wifi_malloc from the RX data path); the TX-aggregation setting
+# above is the one deliberate departure from that, and its rationale is written there.

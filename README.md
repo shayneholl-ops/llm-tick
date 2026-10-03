@@ -30,6 +30,26 @@ One small display that shows **your LLM usage live**:
 
 A `PRESS` line over USB-serial cycles the scenes. The unit does have a RESET and a BOOT button (see "Buttons" below), but on this build neither is a scene control — `PRESS` is. Onboard WS2812 shows the active scene colour.
 
+### Provisioning
+
+The Board can be reconfigured **without a reflash**: send `PROV` on the serial console
+(or power a never-provisioned Board, which offers it on first boot), and it brings up a
+Setup AP and shows a **QR code on the Panel** with the AP name, passphrase and URL. Join
+it from a phone and open the page to see the effective configuration.
+
+- SSID `llm-tick-prov`, WPA2, on channel 1.
+- While Provisioning runs, the usage/weather poll is **suspended** — the radio serves
+  the phone only. This is a deliberate concession to a documented WiFi-driver
+  heap-corruption crash under bursty RX load.
+- The Panel LED turns **amber** so Provisioning is obvious without reading the glass.
+- Provisioning is a deliberate state and **survives a reset**, so a power blip does not
+  take the QR off the screen mid-scan.
+- Leaving is explicit: `PROV stop` on the serial console. A WiFi *connection failure*
+  never enters Provisioning — that is [ADR-0001](docs/adr/0001-explicit-provisioning-trigger.md),
+  so a router reboot cannot turn an unattended Board into a hotspot.
+
+The editable form itself is ticket #4; today the page reports the current values.
+
 ## Merged from three open-source projects
 
 | Piece | Source |
@@ -122,9 +142,37 @@ power-cycling the router is the complementary cure.
 ```bash
 cd llm-tick
 cp secrets.h.example secrets.h     # fill in WiFi + server + weather key
-pio run                            # build
+pio run                            # build (see the environment note below)
 pio run -t upload --upload-port COMx   # flash (auto-download circuit; no button to hold)
 ```
+
+### Which environment `pio run` builds
+
+There are two real environments, and the default one is not the obvious one.
+
+| Env | Framework | Role |
+|---|---|---|
+| **`esp32s3-idf`** *(default)* | `arduino, espidf` | **Ship this.** Compiles the WiFi driver from ESP-IDF source. |
+| `esp32s3` | `arduino` | Legacy. Links a *prebuilt* driver. **Reproduces a crash — do not ship.** |
+| `esp32s3-nohttp` | `arduino` | Diagnostic; Setup AP up with the web server compiled out. |
+
+`esp32s3-idf` is listed first in `platformio.ini`, so a bare `pio run` builds it. That
+matters: the plain-Arduino build links a WiFi driver compiled with
+`DYNAMIC_RX_BUFFER_NUM=32`, whose dynamic RX buffer pool corrupts the TLSF heap and
+panics the board about a second after any client associates with the Setup AP. That is
+the defect issue #6 exists to eliminate, and the cure is `sdkconfig.defaults`
+(`DYNAMIC_RX_BUFFER_NUM=0`) — which the Arduino build ignores, because it never reads
+that file.
+
+To reproduce the original crash on purpose:
+
+```bash
+pio run -e esp32s3 -t upload --upload-port COMx
+```
+
+Both environments build from the identical `src/`; there is no code port between them.
+See `HANDOFF.md` item 5 for the crash diagnosis and the four `sdkconfig.defaults`
+traps (all of which fail silently).
 
 ## Server (the data source)
 

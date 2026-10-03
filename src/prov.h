@@ -57,6 +57,21 @@ void provLeave(void);
 // somebody is trying to focus a camera on it.
 void provRestoreIfSaved(void);
 
+// Enter Provisioning if this Board has NEVER been provisioned. Call once in setup(),
+// after cfgLoad() and after provRestoreIfSaved().
+//
+// This is the third and last ADMITTED way into Provisioning, and ADR-0001 names it
+// explicitly: "only when the Board has never been provisioned, or on an explicit
+// trigger". A Factory-fresh Board has no stored WiFi credentials, so it cannot
+// connect, so without this it would sit retrying a network it was never told about —
+// with no way to discover the Setup AP short of a serial cable.
+//
+// It is deliberately NOT the same as "the connect failed". This checks whether a
+// credential was EVER stored, which is a one-shot fact about the Board's history. A
+// connection failure on a provisioned Board is a network problem and must stay on the
+// backoff path, or a router reboot would turn every unattended Board into a hotspot.
+void provEnterIfNeverProvisioned(void);
+
 // One-line status for the serial console and the boot report.
 void provPrintStatus(void);
 
@@ -64,7 +79,7 @@ void provPrintStatus(void);
 const char* provApIp(void);
 
 // ── Panel screen ─────────────────────────────────────────────────────────────
-// Draw the Provisioning screen into a framebuffer: a QR on a FLAT background plus the
+// Draw the Provisioning Panel into a framebuffer: a QR on a FLAT background plus the
 // AP name, passphrase and URL. Flat because the animated scene's bright pixels fight
 // QR contrast, and a QR that will not scan is a locked-out Board.
 //

@@ -42,10 +42,10 @@ static const int kQuietModules = 4;
 static const uint16_t kBgLogical = 0xFFFF;   // white
 static const uint16_t kInkLogical = 0x0000;  // black
 
-// Provisioning LED: a distinct colour so setup mode is visible without reading the
+// Provisioning LED: a distinct colour so Provisioning is visible without reading the
 // glass. Usage is blue, standby is soft green, so this is a warm amber — unmistakable
 // next to both, and not confusable with either.
-static void provLedOn()  { showLed(2); }   // scene 2 == provision (see showLed)
+static void provLedOn()  { showLed(kProvLedSentinel); }   // see showLed()
 
 // ── QR ───────────────────────────────────────────────────────────────────────
 // Build the "join this network" URI and encode it. Smallest version that fits, so the
@@ -81,14 +81,14 @@ static bool encodeQr() {
 // AP can be proven reachable, which is what this ticket's acceptance criterion needs.
 static const char kPlaceholderPage[] PROGMEM = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llm-tick setup</title>
+<title>llm-tick provisioning</title>
 <style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:32rem}
 code{background:#eee;padding:.15rem .35rem;border-radius:.25rem}</style></head>
-<body><h1>llm-tick setup</h1>
-<p>This is the setup access point. The configuration form is not built yet
+<body><h1>llm-tick provisioning</h1>
+<p>This is the Provisioning access point. The form is not built yet
 (that is the next ticket).</p>
 <p>The Board is reachable at <code>http://192.168.4.1/</code>.</p>
-<p>Current configuration:</p><pre id="cfg">loading&hellip;</pre>
+<p>Effective configuration:</p><pre id="cfg">loading&hellip;</pre>
 <script>
 fetch('/cfg').then(r=>r.json()).then(d=>{
   document.getElementById('cfg').textContent =
@@ -162,20 +162,28 @@ bool provStart() {
     WiFi.setAutoReconnect(false);
     WiFi.disconnect(false, false);   // drop any lingering STA attempt, keep the radio
     WiFi.mode(WIFI_AP);
-    // THROTTLE THE RX PATH. This Board has a documented, reproducible heap-corruption
-    // crash in the WiFi driver's DYNAMIC RX buffer pool under bursty receive load
-    // (HANDOFF.md item 5). The decoded crash is always:
-    //   wDev_ProcessRxSucData -> esf_buf_alloc_dynamic -> wifi_malloc -> tlsf_malloc
-    // The prebuilt driver is built with DYNAMIC_RX_BUFFER_NUM=32 and AMPDU_RX enabled,
-    // so a client that associates and then talks (DHCP, DNS, mDNS, ARP) fires exactly
-    // the burst that corrupts the pool. MEASURED 2026-10-02: the Board panicked ~1 s
-    // after `stations -> 1`, with the web server COMPILED OUT, so this is the radio and
-    // not our HTTP code.
+    // THROTTLE THE RX PATH.
     //
-    // sdkconfig.defaults cannot help (the Arduino build links a prebuilt driver), so the
-    // lever is modem sleep: the radio then wakes on a schedule instead of accepting
-    // every inbound frame the instant it arrives, which is precisely the burst pattern
-    // that corrupts the pool. Latency is irrelevant for a setup page.
+    // This Board has a documented, reproducible heap-corruption crash in the WiFi
+    // driver's DYNAMIC RX buffer pool under bursty receive load (HANDOFF.md item 5).
+    // The decoded crash is always:
+    //   wDev_ProcessRxSucData -> esf_buf_alloc_dynamic -> wifi_malloc -> tlsf_malloc
+    // A client that associates and then talks (DHCP, DNS, mDNS, ARP) fires exactly the
+    // burst that corrupts the pool.
+    //
+    // It is FIXED STRUCTURALLY in sdkconfig.defaults, for the esp32s3-idf env that
+    // compiles the driver from IDF source: DYNAMIC_RX_BUFFER_NUM=0 means the dynamic
+    // pool does not exist, rather than being provoked less often. (Measured 2026-10-02:
+    // the Board still panicked ~1 s after `stations -> 1` with the web server compiled
+    // out, which exonerated the HTTP code and pointed at the radio.)
+    //
+    // The setting below is the SECOND line of defence, kept because this function also
+    // runs in env:esp32s3 — the legacy plain-Arduino build, which links the PREBUILT
+    // driver and therefore IGNORES sdkconfig.defaults entirely. Modem sleep makes the
+    // radio wake on a schedule instead of accepting every inbound frame the instant it
+    // arrives, which is the burst pattern that corrupts the pool. Latency is irrelevant
+    // for a Provisioning page. provStop() turns it back off, because it is a station
+    // property too and the normal poll should not pay for it.
     WiFi.setSleep(true);
     // Raise TX power for the AP. wifiInit() sets 13 dBm with the note "S3s fail auth at
     // full TX power" — that was about the STATION joining a strong home AP, but the same
@@ -228,15 +236,21 @@ void provStop() {
     if (!g_active) return;
     if (g_server) g_server->stop();
     WiFi.softAPdisconnect(true);
-    // Restore the station settings wifiInit() relies on. Leaving auto-reconnect off
-    // would make the Board unable to recover its STA link after setup, which looks
-    // identical to "the server went away".
     WiFi.mode(WIFI_STA);
+    // UNDO the station-affecting settings provStart() changed, or "leave Provisioning"
+    // would not restore normal operation:
+    //   - modem sleep was turned ON to throttle the AP's RX path (see provStart)
+    //   - TX power was raised to 17 dBm for the AP's beacons and WPA2 handshake
+    // Both are STATION properties too. Leaving them set after Provisioning means the
+    // Board's normal poll runs slower and louder than it should, invisibly, for the
+    // rest of its life until the next reboot.
+    WiFi.setSleep(false);
+    WiFi.setTxPower(WIFI_POWER_13dBm);   // the value wifiInit() uses (see data.cpp)
     WiFi.setAutoReconnect(true);
     WiFi.reconnect();
     g_active = false;
     g_qrSize = 0;
-    Serial.println("[prov] Setup AP down; normal operation resumes");
+    Serial.println("[prov] Setup AP down; modem sleep off, tx restored; normal operation resumes");
 }
 
 bool provActive() { return g_active; }
@@ -272,7 +286,7 @@ void provTick() {
 
 // ── persistence ──────────────────────────────────────────────────────────────
 // Provisioning is a DELIBERATE state, so it survives a reboot. Without this, a power
-// blip, a cable nudge, or any tool that hard-resets the chip drops the setup screen
+// blip, a cable nudge, or any tool that hard-resets the chip takes the Panel screen
 // and the operator has to re-enter it — taking the QR away exactly when someone is
 // trying to focus a camera on it. (That happened during development, repeatedly.)
 //
@@ -299,6 +313,24 @@ void provRestoreIfSaved() {
         Serial.println("[prov] resuming Provisioning from before the reboot");
         provEnter();
     }
+#endif
+}
+
+void provEnterIfNeverProvisioned() {
+#ifndef CFG_HOST_TEST
+    if (g_active) return;   // already restoring a deliberate Provisioning
+    // "Never provisioned" == no WiFi SSID has ever been STORED. cfgWifiIsStored() is
+    // false both for a Factory-fresh Board and for one whose SSID was explicitly
+    // cleared — and an explicitly cleared SSID is a deliberate "I want no network",
+    // which must NOT resurrect the setup path. Only the first is handled here: a Board
+    // that had credentials and then had them cleared is still provisioned, and
+    // cfgWifiIsStored() alone cannot distinguish the two cases. Ticket #4's form will
+    // record a separate "provisioned" flag precisely so it can.
+    if (cfgWifiIsStored()) return;
+
+    Serial.println("[prov] no WiFi credentials have ever been stored — offering Provisioning");
+    Serial.println("[prov] (a network failure on an ALREADY-provisioned Board never does this; ADR-0001)");
+    provEnter();
 #endif
 }
 
@@ -353,8 +385,9 @@ void provPrintStatus() {
 
 // ── Panel screen ─────────────────────────────────────────────────────────────
 // Everything here writes BYTE-SWAPPED 565 directly, like wxscene.cpp: the framebuffer is
-// blitted raw, so a logical colour must be swapped on the way in.
-static inline uint16_t sw(uint16_t logical) { return (uint16_t)((logical >> 8) | (logical << 8)); }
+// blitted raw, so a logical colour must be swapped on the way in. The helper is
+// sw565(), shared from tick.h.
+static inline uint16_t sw(uint16_t logical) { return sw565(logical); }
 
 static void fillRow(uint16_t* buf, int w, int y, uint16_t c) {
     uint16_t* row = buf + (size_t)y * w;
@@ -399,19 +432,20 @@ void provRender(uint16_t* buf, int w, int h) {
     const uint16_t bg  = sw(kBgLogical);
     const uint16_t ink = sw(kInkLogical);
 
-    // NO uiSpr->setBuffer() here — see the long note in ui.cpp::renderUiScene().
-    // uiSpr is sprites[idx] and `buf` IS its own createSprite() buffer, so re-binding it
-    // makes LGFX_Sprite::setBuffer() call deleteSprite() -> release() -> heap_free() on a
-    // LIVE buffer, then re-adopt the dangling pointer. That is a use-after-free and it
-    // corrupted the heap (crash inside tlsf_free/remove_free_block).
-    //
-    // An earlier attempt ADDED this setBuffer() call here to stop a StoreProhibited
-    // panic on the first Provisioning render. That was the wrong fix — it papered over
-    // the symptom by rebinding to an already-freed pointer that happened to still be
-    // mapped. With the buffer no longer being freed, the sprite is always valid and
-    // nothing needs binding.
+    // NO uiSpr->setBuffer() here — the full explanation lives in ui.cpp at
+    // renderUiScene(), which is where the call used to be. In one line: `buf` IS
+    // uiSpr's own createSprite() buffer, and setBuffer() calls deleteSprite() ->
+    // release() -> heap_free() on it, so calling it each frame freed the live
+    // framebuffer and left the sprite drawing into dangling memory.
 
     // FLAT background over the whole panel — no scene, maximum QR contrast.
+    //
+    // COLOUR PATH: the two constants are the one documented exception to the
+    // "pre-shift every UI colour through wb565()" rule (AGENTS.md, HANDOFF item 4).
+    // wb565() exists to tame this Panel's green cast; pure white and pure black are
+    // chosen here because a QR is a binary code read by contrast ratio, not a
+    // brand-coloured surface, and a shifted pair shrinks the margin that margin
+    // decides. Greyscale has no cast to remove.
     for (int y = 0; y < h; y++) fillRow(buf, w, y, bg);
 
     // Draw the QR from the cached matrix, centred horizontally.
@@ -422,7 +456,14 @@ void provRender(uint16_t* buf, int w, int h) {
 
     int qrPx = total * scale;
     int x0 = (w - qrPx) / 2;
-    int y0 = 96;                      // below the title band
+    // TOP-BAND MEANDER GUARD. Display rows 0-59 must stay one uniform colour on this
+    // Panel: the ST7789's last ~60 RAM rows meander in luminance, and a uniform field
+    // has no edges for it to modulate (HANDOFF.md item 2). Both scenes obey this.
+    // An earlier version of this screen drew its title at y=30, which put dark text
+    // inside the guarded band and reintroduced the flicker this guard exists to
+    // prevent. So EVERY inked row below is >= kTopSafeY.
+    static const int kTopSafeY = 60;      // first row free to carry content
+    int y0 = 96;                          // QR top, below the guard and the title
 
     if (g_qrSize) {
         for (int my = 0; my < g_qrSize; my++) {
@@ -436,10 +477,8 @@ void provRender(uint16_t* buf, int w, int h) {
         }
     }
 
-    // Title above the QR, credentials below it. Rows above y=96 are pure background,
-    // which also satisfies the top-band meander guard (rows 0-59 stay plain).
-    drawCentered(30, ink, 4, "SETUP MODE");
-    drawCentered(64, ink, 0, "scan the code to join");
+    // Title above the QR, credentials below it. Every y here is >= kTopSafeY.
+    drawCentered(kTopSafeY + 2, ink, 4, "PROVISIONING");
 
     int ty = y0 + qrPx + 10;
     char line[64];
@@ -452,5 +491,5 @@ void provRender(uint16_t* buf, int w, int h) {
     snprintf(line, sizeof(line), "OPEN  http://%s/", (ip && *ip) ? ip : "192.168.4.1");
     drawCentered(ty + 48, ink, 2, line);
 
-    drawCentered(h - 18, ink, 0, "PROV STOP  to leave setup");
+    drawCentered(h - 18, ink, 0, "PROV STOP  to leave");
 }
