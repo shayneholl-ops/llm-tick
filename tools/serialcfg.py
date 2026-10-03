@@ -22,23 +22,28 @@ EXPECT = {
     "SETWIFI": "[cfg] wifi",
     "SETSERVER": "[cfg] server",
     "FACTORY": "FACTORY",
+    "PROV stop": "Setup AP down",
+    "PROV": "[prov]",
 }
 
 
 def expected_for(cmd: str) -> str:
-    for key, marker in EXPECT.items():
+    # Longest-prefix first: "PROV stop" must not match the "PROV" entry.
+    for key in sorted(EXPECT, key=len, reverse=True):
         if cmd.startswith(key):
-            return marker
+            return EXPECT[key]
     return ""
 
 
 def send(s, cmd: str, timeout: float = 4.0):
     """Send one command; return (reply_text, matched).
 
-    Keeps reading for the WHOLE timeout window even after a match, so trailing output
-    from the same exchange is captured. Returning at the first match truncated replies
-    and made commands look lost when they had in fact answered.
+    Drains to a quiet point FIRST (see drain_quiet), then keeps reading for the whole
+    timeout window even after a match, so trailing output from the same exchange is
+    captured. Returning at the first match truncated replies and made commands look
+    lost when they had in fact answered.
     """
+    drain_quiet(s)
     s.write((cmd + "\n").encode())
     s.flush()
     want = expected_for(cmd)
@@ -80,6 +85,22 @@ def wait_ready(s, timeout: float = 40.0) -> bool:
     return False
 
 
+def drain_quiet(s, rounds: int = 30, pause: float = 0.25) -> bool:
+    """Read until the Board stops talking.
+
+    REQUIRED before sending a command. The Board streams steady-state log lines
+    continuously, and if the host does not clear that backlog first, the command's
+    reply arrives mixed with unrelated output — which reads as "no reply" and makes a
+    working command look broken. This was the single biggest source of false failures
+    while building the config surface.
+    """
+    for _ in range(rounds):
+        if not s.read(200000):
+            return True
+        time.sleep(pause)
+    return False
+
+
 def main() -> int:
     port = sys.argv[1] if len(sys.argv) > 1 else "COM4"
     s = serial.Serial(port, 115200, timeout=0.3)
@@ -97,7 +118,7 @@ def run(s) -> int:
             got, ok = send(s, cmd)
             print(f">>> {cmd}")
             for line in got.splitlines():
-                if "[cfg]" in line or "[diag]" in line:
+                if "[cfg]" in line or "[diag]" in line or "[prov]" in line:
                     print("   ", line)
             print(f"    [{'OK' if ok else 'NO REPLY'}]")
             if not ok:

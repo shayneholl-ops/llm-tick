@@ -2,6 +2,7 @@
 // server.py, idle->standby switching, weather refresh, wifi backstop.
 #include "tick.h"
 #include "config.h"
+#include "prov.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
@@ -205,6 +206,28 @@ int usagePageCountOf(const Usage& u) {
 void tickLogic() {
   unsigned long now = millis();
   g_u.fetchedAgo = (now - g_u.lastFetchMs) / 1000;
+
+  // PROVISIONING GATE (ticket #3). While the Setup AP is up the radio belongs to the
+  // phone: a WiFi-driver heap-corruption crash under bursty RX load is documented on
+  // this Board, and serving a page is a heavier, burstier load than polling ever was.
+  // Suspending the poll also keeps the two network roles from interleaving.
+  //
+  // The idle<->standby logic is skipped too, so Provisioning cannot be yanked away by
+  // a scene switch mid-setup. Reconnect backoff still runs: it is cheap and keeps the
+  // STA link healthy for the credential test in ticket #4.
+  if (provActive()) {
+    // DO NOT call WiFi.reconnect() here. Provisioning runs AP-ONLY, so there is no
+    // station to reconnect: WiFi.status() is never WL_CONNECTED, and the old code
+    // therefore fired a station reconnect on every backoff interval, forever. On a
+    // single radio a station reconnect restarts the WiFi driver and tears the AP down
+    // with it — which reaches the phone as "connected, then dropped after a few
+    // seconds". Measured on the glass 2026-10-02. The radio belongs to the phone while
+    // Provisioning is active; nothing else may touch it.
+    //
+    // (Ticket #4's verify-then-reboot needs the STA link back, but that is a deliberate
+    // AP+STA moment it will set up itself, not something this idle loop should do.)
+    return;
+  }
 
   // Poll cadence: 60s normally, 10s after a failure. A scene switch refreshes
   // promptly, but at most once per 30 s: hammering BOOT in a tight loop must

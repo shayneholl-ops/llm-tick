@@ -7,6 +7,7 @@
 #include "wxscene.h"
 #include "tick.h"
 #include "config.h"
+#include "prov.h"
 
 LGFX lcd;
 LGFX_Sprite spr0(&lcd), spr1(&lcd);
@@ -121,7 +122,10 @@ static void blTask(void*) {
 void showLed(int s) {
   uint32_t c;
   if (s == 0)      c = led.Color(0, 24, 24);   // usage: blue
-  else             c = led.Color(0, 20, 10);   // weather standby: soft green
+  else if (s == 1) c = led.Color(0, 20, 10);   // weather standby: soft green
+  else             c = led.Color(28, 14, 0);   // Provisioning: amber (unmistakable
+                                               //   beside both the blue and the green,
+                                               //   so setup mode reads at a glance)
   led.setPixelColor(0, c);
   led.show();
 }
@@ -156,6 +160,11 @@ void renderTask(void*) {
           for (int x = 0; x < SCREEN_W; x++) row[x] = f;
         }
       }
+    } else if (provActive()) {
+      // Provisioning OWNS the Panel while it runs. It is not a scene in the PRESS
+      // cycle: entering it is deliberate (ADR-0001), so it must not be somewhere you
+      // can wander into by cycling, and leaving it must not depend on the scene index.
+      provRender(bufs[idx], SCREEN_W, SCREEN_H);
     } else {
       renderUiScene(s, bufs[idx], SCREEN_W, SCREEN_H);
     }
@@ -354,6 +363,15 @@ static void handleSerialCmd(char* buf, int n) {
         // from a Factory default when debugging a Board you cannot reach.
         cfgPrintReport();
       }
+      else if (n >= 4 && strncmp(buf, "PROV", 4) == 0) {
+        // PROV [stop] — enter Provisioning, or leave it with "PROV stop".
+        //
+        // This is the ONLY way in, deliberately (ADR-0001): a WiFi connection failure
+        // must never start broadcasting an AP, or a router reboot would leave an
+        // unattended Board advertising a setup network. There is no auto-enter.
+        if (n >= 8 && strncmp(buf + 5, "stop", 4) == 0) provLeave();
+        else                                            provEnter();
+      }
       else if (n >= 7 && strncmp(buf, "FACTORY", 7) == 0) {
         // FACTORY — the recovery path. Wipes stored configuration and reboots onto
         // the Factory defaults, so a Board with unusable credentials is always
@@ -427,12 +445,22 @@ void setup() {
   wifiInit();
   ntpWait();
   MDNS.begin("llm-tick");
-  resolveServer();
-  fetchUsage();
-  refreshWeather();
+
+  // Resume Provisioning BEFORE the boot fetch below. Provisioning is a deliberate
+  // state and survives a reset, and while it runs the radio belongs to the phone: a
+  // boot fetch here would be a poll outside the gate, competing with the setup page.
+  provRestoreIfSaved();
+
+  if (!provActive()) {
+    resolveServer();
+    fetchUsage();
+    refreshWeather();
+  } else {
+    Serial.println("[tick] Provisioning active at boot: skipping the startup fetch");
+  }
 
   for (int i = 0; i < 2; i++) xQueueSend(freeQ, &i, 0);
-  showLed(g_scene);
+  showLed(provActive() ? 2 : g_scene);   // amber if setup mode owns the Panel
   Serial.println("[tick] running — PRESS (serial) cycles usage <-> weather");
 }
 
@@ -457,6 +485,11 @@ void loop() {
   }
 
   tickLogic();   // data poll cadence, idle->standby, weather refresh, wifi backstop
+
+  // Serve the setup page while Provisioning runs. The usage/weather poll is gated off
+  // inside tickLogic() (the radio belongs to the phone), so this is the only network
+  // work happening.
+  provTick();
 
   // Second serial service: xQueueReceive above blocks until a frame is ready, so a
   // command that arrives during that wait is not seen until the next iteration.

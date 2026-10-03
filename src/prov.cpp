@@ -1,0 +1,451 @@
+// prov.cpp — the Provisioning state. See prov.h for the rules it implements.
+//
+// Two halves:
+//   1. the Setup AP + the placeholder web page (radio side)
+//   2. the Panel screen: a QR on a flat background (drawing side)
+//
+// The QR matrix is built ONCE, when Provisioning is entered, and cached — rendering it
+// per frame would re-run the encoder 79 times a second for a static image.
+#include "prov.h"
+#include "tick.h"
+#include "config.h"
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include <string.h>
+
+extern "C" {
+#include "qrcode.h"
+}
+
+// ── state ────────────────────────────────────────────────────────────────────
+static bool g_active = false;
+static WebServer* g_server = nullptr;
+
+// Cached QR matrix. Version 1 = 21x21, but sized for up to version 4 (33x33) so a
+// longer payload (a rotated passphrase, a longer SSID) still has room without a
+// recompile. qrcode_getBufferSize() would give the exact size per version.
+static const int kQrMaxModules = 33;
+static uint8_t g_qrBuf[kQrMaxModules * kQrMaxModules];
+static QRCode  g_qr;
+static int     g_qrSize = 0;     // 0 = nothing encoded
+static char    g_qrPayload[128];
+
+// Panel geometry. 4 px/module: at version 1 that is (21 + 8) * 4 = 116 px, which leaves
+// room for the credentials at a legible size. The quiet zone (4 modules each side) is
+// part of the budget — a scanner needs it to lock on.
+static const int kQuietModules = 4;
+
+// The flat background and ink. Deliberately NOT the near-black scene canvas: a QR needs
+// maximum contrast, and this screen is a utility, not part of the brand surface.
+static const uint16_t kBgLogical = 0xFFFF;   // white
+static const uint16_t kInkLogical = 0x0000;  // black
+
+// Provisioning LED: a distinct colour so setup mode is visible without reading the
+// glass. Usage is blue, standby is soft green, so this is a warm amber — unmistakable
+// next to both, and not confusable with either.
+static void provLedOn()  { showLed(2); }   // scene 2 == provision (see showLed)
+
+// ── QR ───────────────────────────────────────────────────────────────────────
+// Build the "join this network" URI and encode it. Smallest version that fits, so the
+// modules stay as large as possible on the glass.
+//
+// T:WPA2 — NOT T:WPA. In the WIFI: URI format `T:WPA` means WPA1, and the ESP32's
+// softAP() with a passphrase advertises WPA2-PSK/CCMP. A phone that reads "WPA" and
+// attempts a WPA1 association against a WPA2-only AP fails the handshake, and both
+// iOS and Android commonly surface that as "incorrect password" even though the
+// passphrase is correct. That is exactly the symptom this fixes. (Verified on the
+// glass 2026-10-02: the phone read the QR fine but would not join.)
+static bool encodeQr() {
+    snprintf(g_qrPayload, sizeof(g_qrPayload), "WIFI:T:WPA2;S:%s;P:%s;;",
+             PROV_AP_SSID, PROV_AP_PASS);
+
+    for (uint8_t ver = 1; ver <= 4; ver++) {
+        uint16_t need = qrcode_getBufferSize(ver);
+        if (need > sizeof(g_qrBuf)) break;
+        if (qrcode_initText(&g_qr, g_qrBuf, ver, ECC_LOW, g_qrPayload) == 0) {
+            g_qrSize = g_qr.size;
+            Serial.printf("[prov] QR ok: version %u, %dx%d modules, %u B payload\n",
+                          ver, g_qr.size, g_qr.size, (unsigned)strlen(g_qrPayload));
+            return true;
+        }
+    }
+    g_qrSize = 0;
+    Serial.println("[prov] QR ENCODE FAILED - the screen will show text only");
+    return false;
+}
+
+// ── radio side ───────────────────────────────────────────────────────────────
+// Placeholder page. Ticket #4 replaces this with the real form; here it exists so the
+// AP can be proven reachable, which is what this ticket's acceptance criterion needs.
+static const char kPlaceholderPage[] PROGMEM = R"HTML(<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llm-tick setup</title>
+<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:32rem}
+code{background:#eee;padding:.15rem .35rem;border-radius:.25rem}</style></head>
+<body><h1>llm-tick setup</h1>
+<p>This is the setup access point. The configuration form is not built yet
+(that is the next ticket).</p>
+<p>The Board is reachable at <code>http://192.168.4.1/</code>.</p>
+<p>Current configuration:</p><pre id="cfg">loading&hellip;</pre>
+<script>
+fetch('/cfg').then(r=>r.json()).then(d=>{
+  document.getElementById('cfg').textContent =
+    'wifi ssid : '+d.ssid+'\n'+
+    'server    : '+d.server+'\n'+
+    'server ip : '+d.ip+'\n'+
+    'weather   : '+d.weather;
+}).catch(e=>{document.getElementById('cfg').textContent='(unavailable)';});
+</script></body></html>)HTML";
+
+static void handleRoot() {
+    Serial.printf("[prov] GET /        from %s\n", g_server->client().remoteIP().toString().c_str());
+    g_server->send_P(200, "text/html", kPlaceholderPage);
+}
+
+// The page reads this. Deliberately NOT the passphrase or the API key — this handler is
+// reachable by anyone on the Setup AP.
+static void handleCfg() {
+    Serial.printf("[prov] GET /cfg     from %s\n", g_server->client().remoteIP().toString().c_str());
+    char json[256];
+    snprintf(json, sizeof(json),
+             "{\"ssid\":\"%s\",\"server\":\"%s\",\"ip\":\"%s\",\"weather\":\"%s\"}",
+             cfgWifiSsid(), cfgServerHost(),
+             cfgServerIpIsSet() ? "(set)" : "(none)",   // never echo the real octets
+             cfgWeatherLocation());
+    g_server->send(200, "application/json", json);
+}
+
+static void handleNotFound() {
+    // Captive-portal nudge: phones probe for a known URL (Apple: /hotspot-detect.html,
+    // Android: /generate_204) to decide whether a network needs a sign-in page.
+    // Answering anything unknown with a 302 to the setup page is what makes the
+    // "Sign in to network" sheet appear — without it, joining the AP looks like it
+    // worked but nothing opens, which reads as "no IP redirect".
+    g_server->sendHeader("Location", PROV_AP_URL, true);
+    g_server->send(302, "text/plain", "");
+}
+
+// The captive-portal probes themselves. Answering these with a REDIRECT is what
+// triggers the OS sheet; a 200 would tell the phone "this network is fine" and it
+// would never offer the page.
+static void handleProbe() {
+    Serial.printf("[prov] probe %s from %s -> redirect\n",
+                  g_server->uri().c_str(),
+                  g_server->client().remoteIP().toString().c_str());
+    handleNotFound();
+}
+
+bool provStart() {
+    if (g_active) return true;
+
+    // Pin the AP to channel 1 and a 20 MHz width.
+    //
+    // WHY: left to itself the S3 picked channel 9, and clients saw the beacon in a scan
+    // but failed to associate ("The specific network is not available", RSSI 255 from
+    // Windows). Channel 9 is an OVERLAPPING channel — nothing uses it as a primary —
+    // and this environment has ~13 other 2.4 GHz APs, so the beacon was visible but
+    // unusable. Channels 1, 6 and 11 are the only non-overlapping ones; 1 is the
+    // quietest here.
+    //
+    // IMPORTANT, and the reason the channel is now enforced in AP-only mode: with
+    // WIFI_AP_STA the single radio forces the AP onto the STATION's channel, so the
+    // channel argument is silently ignored (measured: the STA was on channel 9, and the
+    // AP stayed on 9 despite asking for 1). AP-only gives the AP a free choice.
+    //
+    // TURN OFF AUTO-RECONNECT FIRST. wifiInit() enables it, and it is a STATION
+    // feature: left on with no reachable STA it keeps retrying, and each retry
+    // re-initialises the WiFi driver. On a single radio that tears the AP down,
+    // which shows up on the phone as "connected, then dropped after a few seconds".
+    // Disabling it must happen BEFORE the mode switch.
+    WiFi.setAutoReconnect(false);
+    WiFi.disconnect(false, false);   // drop any lingering STA attempt, keep the radio
+    WiFi.mode(WIFI_AP);
+    // THROTTLE THE RX PATH. This Board has a documented, reproducible heap-corruption
+    // crash in the WiFi driver's DYNAMIC RX buffer pool under bursty receive load
+    // (HANDOFF.md item 5). The decoded crash is always:
+    //   wDev_ProcessRxSucData -> esf_buf_alloc_dynamic -> wifi_malloc -> tlsf_malloc
+    // The prebuilt driver is built with DYNAMIC_RX_BUFFER_NUM=32 and AMPDU_RX enabled,
+    // so a client that associates and then talks (DHCP, DNS, mDNS, ARP) fires exactly
+    // the burst that corrupts the pool. MEASURED 2026-10-02: the Board panicked ~1 s
+    // after `stations -> 1`, with the web server COMPILED OUT, so this is the radio and
+    // not our HTTP code.
+    //
+    // sdkconfig.defaults cannot help (the Arduino build links a prebuilt driver), so the
+    // lever is modem sleep: the radio then wakes on a schedule instead of accepting
+    // every inbound frame the instant it arrives, which is precisely the burst pattern
+    // that corrupts the pool. Latency is irrelevant for a setup page.
+    WiFi.setSleep(true);
+    // Raise TX power for the AP. wifiInit() sets 13 dBm with the note "S3s fail auth at
+    // full TX power" — that was about the STATION joining a strong home AP, but the same
+    // low power now governs the SETUP AP's beacons and its WPA2 handshake, and a client
+    // that cannot complete the 4-way handshake never associates. 17 dBm gives the AP a
+    // usable link without going to the 20 dBm maximum.
+    WiFi.setTxPower(WIFI_POWER_17dBm);
+    if (!WiFi.softAP(PROV_AP_SSID, PROV_AP_PASS, PROV_AP_CHANNEL, 0, PROV_AP_MAX_STA)) {
+        Serial.println("[prov] softAP FAILED");
+        return false;
+    }
+    Serial.printf("[prov] AP-only ch%d, tx=%d, autoReconnect=off, modemSleep=on\n",
+                  PROV_AP_CHANNEL, (int)WiFi.getTxPower());
+
+#ifdef PROV_NO_HTTP
+    // DIAGNOSTIC BUILD: bring the AP up but run NO web server at all. If the crash still
+    // happens when a client associates, the server is exonerated and the fault is purely
+    // in the WiFi driver's RX path (which the backtrace already suggests: it ends in
+    // wDev_ProcessRxSucData -> wifi_malloc -> tlsf_malloc).
+    Serial.println("[prov] PROV_NO_HTTP: web server DISABLED (diagnostic build)");
+#else
+    if (!g_server) {
+        g_server = new WebServer(80);
+        if (g_server) {
+            g_server->on("/", handleRoot);
+            g_server->on("/cfg", handleCfg);
+            // Captive-portal probes, answered with a redirect so the OS offers the page.
+            // Apple, Android and Windows each use a different URL; without these the
+            // phone joins the AP and then appears to do nothing.
+            g_server->on("/hotspot-detect.html", handleProbe);      // Apple
+            g_server->on("/generate_204", handleProbe);             // Android
+            g_server->on("/gen_204", handleProbe);                  // Android (alt)
+            g_server->on("/connecttest.txt", handleProbe);          // Windows
+            g_server->on("/redirect", handleProbe);                 // generic
+            g_server->onNotFound(handleNotFound);
+            g_server->begin();
+        }
+    }
+#endif  // PROV_NO_HTTP
+    encodeQr();
+    g_active = true;
+
+    Serial.printf("[prov] Setup AP '%s' up (WPA2), ip=%s, page %s\n",
+                  PROV_AP_SSID, WiFi.softAPIP().toString().c_str(), PROV_AP_URL);
+    Serial.println("[prov] usage/weather polling SUSPENDED while Provisioning runs");
+    return true;
+}
+
+void provStop() {
+    if (!g_active) return;
+    if (g_server) g_server->stop();
+    WiFi.softAPdisconnect(true);
+    // Restore the station settings wifiInit() relies on. Leaving auto-reconnect off
+    // would make the Board unable to recover its STA link after setup, which looks
+    // identical to "the server went away".
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.reconnect();
+    g_active = false;
+    g_qrSize = 0;
+    Serial.println("[prov] Setup AP down; normal operation resumes");
+}
+
+bool provActive() { return g_active; }
+
+void provTick() {
+    if (!g_active || !g_server) return;
+    g_server->handleClient();
+    // Log association and every HTTP request. This is the ONLY way to tell "the phone
+    // never joined the AP" apart from "it joined and asked for nothing" apart from
+    // "it asked and got an answer it could not use" — three different problems that
+    // all look identical from the operator's side of the glass.
+    static int lastStations = -1;
+    int st = (int)WiFi.softAPgetStationNum();
+    if (st != lastStations) {
+        Serial.printf("[prov] stations -> %d\n", st);
+        lastStations = st;
+    }
+    // STACK WATCHDOG. handleClient() runs on the Arduino loopTask, and that task's
+    // stack was the thing that overflowed when a client connected (StoreProhibited,
+    // EXCVADDR 0x0b, exactly on association). Report the high-water mark while a client
+    // is attached, so a regression shows up as a number rather than as a panic.
+    if (st > 0) {
+        static unsigned long last = 0;
+        unsigned long now = millis();
+        if (now - last > 3000) {
+            last = now;
+            UBaseType_t hw = uxTaskGetStackHighWaterMark(nullptr);   // words, this task
+            Serial.printf("[prov] loop stack free (min ever): %u bytes\n",
+                          (unsigned)(hw * sizeof(StackType_t)));
+        }
+    }
+}
+
+// ── persistence ──────────────────────────────────────────────────────────────
+// Provisioning is a DELIBERATE state, so it survives a reboot. Without this, a power
+// blip, a cable nudge, or any tool that hard-resets the chip drops the setup screen
+// and the operator has to re-enter it — taking the QR away exactly when someone is
+// trying to focus a camera on it. (That happened during development, repeatedly.)
+//
+// Stored in the same NVS namespace the config uses, so FACTORY clears it too.
+static const char* kProvKey = "prov";
+
+void provSaveFlag(bool on) {
+#ifndef CFG_HOST_TEST
+    Preferences p;
+    p.begin("llmtick", false);
+    p.putBool(kProvKey, on);
+    p.end();
+#endif
+}
+
+// Read the flag at boot and re-enter Provisioning if it was left active.
+void provRestoreIfSaved() {
+#ifndef CFG_HOST_TEST
+    Preferences p;
+    p.begin("llmtick", true);
+    bool was = p.getBool(kProvKey, false);
+    p.end();
+    if (was) {
+        Serial.println("[prov] resuming Provisioning from before the reboot");
+        provEnter();
+    }
+#endif
+}
+
+void provEnter() {
+    if (g_active) { Serial.println("[prov] already in Provisioning"); return; }
+    if (!provStart()) { Serial.println("[prov] could not start Provisioning"); return; }
+    provSaveFlag(true);
+    provLedOn();
+    provPrintStatus();
+}
+
+void provLeave() {
+    if (!g_active) { Serial.println("[prov] not in Provisioning"); return; }
+    provStop();
+    provSaveFlag(false);
+    showLed(g_scene);          // restore the scene's own colour
+}
+
+const char* provApIp() {
+    static char ip[16];
+    if (!g_active) return "";
+    snprintf(ip, sizeof(ip), "%s", WiFi.softAPIP().toString().c_str());
+    return ip;
+}
+
+void provPrintStatus() {
+    if (!g_active) { Serial.println("[prov] inactive"); return; }
+    // Report the AP's OWN view of itself, not just our flag: softAPIP() is empty and
+    // the station count is meaningless if the interface is not actually up, so this
+    // doubles as a self-check that a scan from another machine would agree with.
+    IPAddress ip = WiFi.softAPIP();
+    // Print the CREDENTIALS AS BYTES. A phone that reads the QR and then fails with
+    // "wrong password" means the string the QR carries and the string the AP expects
+    // differ — invisible to the eye, obvious as hex. Also reports the AP's own SSID and
+    // password from the driver, so a mismatch with the compile-time constants shows up.
+    String apSsid = WiFi.softAPSSID();
+    Serial.printf("[prov] active: ssid='%s' pass='%s' url=%s qr=%s ap_ip=%s stations=%d\n",
+                  PROV_AP_SSID, PROV_AP_PASS, PROV_AP_URL,
+                  g_qrSize ? "encoded" : "NOT ENCODED",
+                  ip.toString().c_str(), (int)WiFi.softAPgetStationNum());
+    Serial.printf("[prov] driver sees SSID '%s' (len %u)\n",
+                  apSsid.c_str(), (unsigned)apSsid.length());
+    Serial.print("[prov] AP pass bytes : ");
+    for (const char* p = PROV_AP_PASS; *p; p++) Serial.printf("%02X ", (unsigned char)*p);
+    Serial.println();
+    Serial.printf("[prov] QR payload (%u): %s\n",
+                  (unsigned)strlen(g_qrPayload), g_qrPayload);
+    Serial.print("[prov] QR payload bytes: ");
+    for (const char* p = g_qrPayload; *p; p++) Serial.printf("%02X ", (unsigned char)*p);
+    Serial.println();
+}
+
+// ── Panel screen ─────────────────────────────────────────────────────────────
+// Everything here writes BYTE-SWAPPED 565 directly, like wxscene.cpp: the framebuffer is
+// blitted raw, so a logical colour must be swapped on the way in.
+static inline uint16_t sw(uint16_t logical) { return (uint16_t)((logical >> 8) | (logical << 8)); }
+
+static void fillRow(uint16_t* buf, int w, int y, uint16_t c) {
+    uint16_t* row = buf + (size_t)y * w;
+    for (int x = 0; x < w; x++) row[x] = c;
+}
+
+static void fillRect(uint16_t* buf, int w, int h, int x0, int y0, int rw, int rh, uint16_t c) {
+    for (int y = y0; y < y0 + rh; y++) {
+        if (y < 0 || y >= h) continue;
+        uint16_t* row = buf + (size_t)y * w;
+        for (int x = x0; x < x0 + rw; x++) {
+            if (x < 0 || x >= w) continue;
+            row[x] = c;
+        }
+    }
+}
+
+// Text is drawn through the sprite (LovyanGFX owns the fonts). Everything else is a
+// direct write. `uiSpr` is bound to the active frame by renderTask.
+//
+// Shrinks to Font2 if a line would not fit the width — the same auto-shrink the usage
+// page already uses for wide values. The credentials are the one thing a human must
+// read correctly off the glass, so they must never be clipped or run off the edge.
+static void drawCentered(int y, uint16_t colour, int font, const char* text) {
+    LGFX_Sprite& s = *uiSpr;
+    const lgfx::IFont* f = &fonts::Font0;
+    if (font == 2)      f = &fonts::Font2;
+    else if (font == 4) f = &fonts::Font4;
+    s.setFont(f);
+    const int avail = SCREEN_W - 8;
+    if (font != 0 && s.textWidth(text) > avail) {
+        f = &fonts::Font0;          // too wide even at Font2 -> drop to Font0
+        s.setFont(f);
+    }
+    int tw = s.textWidth(text);
+    s.setTextColor(colour);
+    s.setCursor((SCREEN_W - tw) / 2, y);
+    s.print(text);
+}
+
+void provRender(uint16_t* buf, int w, int h) {
+    const uint16_t bg  = sw(kBgLogical);
+    const uint16_t ink = sw(kInkLogical);
+
+    // Bind the sprite to this frame's buffer BEFORE drawing any text through it.
+    // renderUiScene() does exactly this; skipping it leaves uiSpr pointing at the
+    // PREVIOUS frame (or at nothing on the first Provisioning frame), and the font
+    // calls then fault. Omitting this line crashed the Board with a StoreProhibited
+    // panic (EXCVADDR 0x0b) on the first Provisioning render.
+    uiSpr->setBuffer(buf, w, h, 16);
+
+    // FLAT background over the whole panel — no scene, maximum QR contrast.
+    for (int y = 0; y < h; y++) fillRow(buf, w, y, bg);
+
+    // Draw the QR from the cached matrix, centred horizontally.
+    int scale = 4;
+    int total = (g_qrSize ? g_qrSize : 21) + kQuietModules * 2;
+    if (total * scale > w - 8) scale = (w - 8) / total;
+    if (scale < 3) scale = 3;
+
+    int qrPx = total * scale;
+    int x0 = (w - qrPx) / 2;
+    int y0 = 96;                      // below the title band
+
+    if (g_qrSize) {
+        for (int my = 0; my < g_qrSize; my++) {
+            for (int mx = 0; mx < g_qrSize; mx++) {
+                // Dark modules are "on". qrcode_getModule returns true for a dark module.
+                uint16_t c = qrcode_getModule(&g_qr, (uint8_t)mx, (uint8_t)my) ? ink : bg;
+                int px = x0 + (mx + kQuietModules) * scale;
+                int py = y0 + (my + kQuietModules) * scale;
+                fillRect(buf, w, h, px, py, scale, scale, c);
+            }
+        }
+    }
+
+    // Title above the QR, credentials below it. Rows above y=96 are pure background,
+    // which also satisfies the top-band meander guard (rows 0-59 stay plain).
+    drawCentered(30, ink, 4, "SETUP MODE");
+    drawCentered(64, ink, 0, "scan the code to join");
+
+    int ty = y0 + qrPx + 10;
+    char line[64];
+    snprintf(line, sizeof(line), "WIFI  %s", PROV_AP_SSID);
+    drawCentered(ty, ink, 2, line);
+    snprintf(line, sizeof(line), "PASS  %s", PROV_AP_PASS);
+    drawCentered(ty + 24, ink, 2, line);
+
+    const char* ip = provApIp();
+    snprintf(line, sizeof(line), "OPEN  http://%s/", (ip && *ip) ? ip : "192.168.4.1");
+    drawCentered(ty + 48, ink, 2, line);
+
+    drawCentered(h - 18, ink, 0, "PROV STOP  to leave setup");
+}
