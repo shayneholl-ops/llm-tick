@@ -6,6 +6,7 @@
 #include "board.h"
 #include "wxscene.h"
 #include "tick.h"
+#include "config.h"
 
 LGFX lcd;
 LGFX_Sprite spr0(&lcd), spr1(&lcd);
@@ -22,6 +23,12 @@ int            sceneCount() { return 2; }
 const char*    sceneName(int s) { return s == 0 ? "usage" : "weather"; }
 
 volatile uint32_t g_renderUs = 0;
+
+// How long loop() waits for a rendered frame. The render task is pinned to core 0 and
+// loop() runs there too, so this MUST stay short enough that IDLE0 still gets scheduled
+// (a task-watchdog abort otherwise) and long enough not to spin. 20 ms is below the
+// ~63 ms frame time, so a frame is usually already waiting and the wait returns at once.
+static const int kFrameWaitMs = 20;
 
 QueueHandle_t freeQ, readyQ;   // carry buffer indices (0/1) between the two cores
 
@@ -187,15 +194,47 @@ void checkButton() {
 // Serial test hook: a "PRESS" line over USB-serial emulates a BOOT button press.
 // DIAGNOSTIC (2026-09-19): also "LED 0|1", "BL 0|25|50|100", "PAT 0..6", "ST".
 // DIAGNOSTIC (2026-09-25): "WXB [0..5]" picks the weather background.
+// CONFIG (2026-10-02, ticket #2): SETWIFI / SETSERVER / SETLOC / CFG / FACTORY.
 // (The F1-era "BLEP" and "TYPE" commands were removed 2026-10-02 with the BLE
 //  bridge — see HANDOFF.md item 24.)
+//
+// The line buffer must hold a whole command INCLUDING an SSID and a password
+// ("SETWIFI <ssid> <pass>"), so the old 16 bytes — sized for "BL 100" — would
+// silently truncate credentials. Over-long lines are REJECTED, never truncated: a
+// half-stored SSID is indistinguishable from a typo, and this is the code path that
+// decides whether the Board can reach the network at all.
+static const int kCmdBufLen = 160;
+
+// Defined below the reader; declared here so checkSerialCmd can call it.
+static void handleSerialCmd(char* buf, int n);
+
 void checkSerialCmd() {
-  static char buf[16];
+  static char buf[kCmdBufLen];
   static int n = 0;
+  static bool overflow = false;
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
-      if (n > 0) buf[n] = 0;   // terminate so numeric parses can't read stale bytes
+      if (overflow) {
+        Serial.printf("[cfg] command too long (max %d); ignored\n", kCmdBufLen - 1);
+      } else if (n > 0) {
+        buf[n] = 0;   // terminate so parses can't read stale bytes
+        handleSerialCmd(buf, n);
+      }
+      n = 0;
+      overflow = false;
+    } else if (n < kCmdBufLen - 1) {
+      buf[n++] = c;
+    } else {
+      overflow = true;   // keep draining the line, but refuse to act on it
+    }
+  }
+}
+
+// Handle one complete command line. Kept separate from the reader so the dispatch
+// stays readable as the command set grows (it is the config surface now too).
+static void handleSerialCmd(char* buf, int n) {
+  {
       if (n >= 5 && strncmp(buf, "PRESS", 5) == 0) cycleScene();
       else if (n >= 4 && strncmp(buf, "LED", 3) == 0) {
         if (atoi(buf + 4) == 0) {
@@ -255,17 +294,94 @@ void checkSerialCmd() {
       // BLEP [prefix] — REMOVED 2026-10-02 with the BLE bridge (F1): the
       // Keychron K8 is Bluetooth Classic and the S3 is BLE-only, so there is no
       // peer to match. See HANDOFF.md item 24.
-      n = 0;
-    } else if (n < (int)sizeof(buf) - 1) {
-      buf[n++] = c;
-    }
+
+      // ── Config (ticket #2) ────────────────────────────────────────────────
+      // Exactly ONE command per line: `handleSerialCmd` takes the text after the
+      // first space, so a password may contain spaces but nothing after it.
+      else if (n >= 7 && strncmp(buf, "SETWIFI", 7) == 0) {
+        // SETWIFI <ssid> <pass>   — pass may be empty: "SETWIFI MyNet " sets an
+        // open network; "SETWIFI MyNet" leaves the password untouched.
+        char* arg = buf + 7;
+        while (*arg == ' ') arg++;
+        char* sp = strchr(arg, ' ');
+        if (!*arg) { Serial.println("[cfg] usage: SETWIFI <ssid> [password]"); }
+        else if (sp) { *sp = 0; cfgSetWifiSsid(arg); cfgSetWifiPass(sp + 1); cfgSaveWifi(); Serial.println("[cfg] wifi saved; reboot to apply"); }
+        else { cfgSetWifiSsid(arg); cfgSaveWifi(); Serial.println("[cfg] ssid saved (password unchanged); reboot to apply"); }
+      }
+      else if (n >= 9 && strncmp(buf, "SETSERVER", 9) == 0) {
+        // SETSERVER <host> [ip]   — an ip of "none" or "-" means "explicitly no
+        // fallback" (the CFG_IP_EMPTY state). "none" is the documented spelling;
+        // "-" is accepted as the conventional columnar sentinel.
+        char* arg = buf + 9;
+        while (*arg == ' ') arg++;
+        char* sp = strchr(arg, ' ');
+        if (!*arg) { Serial.println("[cfg] usage: SETSERVER <host> [ip|none]"); }
+        else if (sp) {
+          *sp = 0;
+          char* ip = sp + 1;
+          while (*ip == ' ') ip++;
+          // Trim TRAILING whitespace too: "SETSERVER h - " would otherwise store the
+          // literal "-" as an address, which parses as 0.0.0.0 and silently becomes a
+          // fallback to nowhere instead of the intended "no fallback".
+          size_t iplen = strlen(ip);
+          while (iplen > 0 && (ip[iplen - 1] == ' ' || ip[iplen - 1] == '\t')) ip[--iplen] = 0;
+          cfgSetServerHost(arg);
+          if (strcmp(ip, "-") == 0 || strcmp(ip, "none") == 0) {
+            cfgSetServerIp("");   // explicit: no fallback
+            Serial.printf("[cfg] server saved: host='%s' ip=(none, no fallback); reboot to apply\n",
+                          cfgServerHost());
+          } else {
+            cfgSetServerIp(ip);
+            Serial.printf("[cfg] server saved: host='%s' ip='%s'; reboot to apply\n",
+                          cfgServerHost(), ip);
+          }
+          cfgSaveServer();
+        } else {
+          cfgSetServerHost(arg);
+          cfgSaveServer();
+          Serial.printf("[cfg] server host saved: '%s' (ip unchanged); reboot to apply\n", cfgServerHost());
+        }
+      }
+      else if (n >= 6 && strncmp(buf, "SETLOC", 6) == 0) {
+        char* arg = buf + 6;
+        while (*arg == ' ') arg++;
+        if (!*arg) { Serial.println("[cfg] usage: SETLOC <place>"); }
+        else { cfgSetWeatherLocation(arg); cfgSaveWeather(); Serial.printf("[cfg] weather location saved: '%s'; reboot to apply\n", cfgWeatherLocation()); }
+      }
+      else if (n >= 3 && strncmp(buf, "CFG", 3) == 0) {
+        // CFG — show the EFFECTIVE configuration and where each value came from.
+        // The provenance column is the point: it is how you tell a stored value
+        // from a Factory default when debugging a Board you cannot reach.
+        cfgPrintReport();
+      }
+      else if (n >= 7 && strncmp(buf, "FACTORY", 7) == 0) {
+        // FACTORY — the recovery path. Wipes stored configuration and reboots onto
+        // the Factory defaults, so a Board with unusable credentials is always
+        // recoverable over the cable.
+        Serial.println("[cfg] FACTORY: clearing stored configuration and rebooting...");
+        Serial.flush();
+        cfgFactoryReset();
+      }
   }
 }
 
 void setup() {
+  // Enlarge the RX buffer before anything can send: a config line can be ~60 bytes
+  // ("SETSERVER <host> <ip>"), and the default 256-byte buffer can overflow while the
+  // loop is busy rendering, silently dropping bytes mid-command.
+  Serial.setRxBufferSize(1024);
   Serial.begin(115200);
   delay(200);
   Serial.println("\n[llm-tick] booting");
+
+  // Load stored configuration BEFORE anything reads a getter. With nothing stored this
+  // is a no-op and every getter returns its Factory default, so a fresh Board behaves
+  // exactly as it did before this feature existed.
+  cfgLoad();
+  Serial.printf("[cfg] configuration loaded (ssid=%s host=%s loc=%s)\n",
+                cfgWifiIsStored() ? "stored" : "factory",
+                cfgServerHostIsStored() ? "stored" : "factory",
+                cfgWeatherIsStored() ? "stored" : "factory");
 
   bool ok = lcd.init();
   lcd.setRotation(0);
@@ -323,17 +439,30 @@ void setup() {
 void loop() {
   static uint32_t t0 = 0, fps_n = 0;
 
+  // Service the serial console promptly, then behave exactly as before.
+  //
+  // DO NOT shorten the delay() below to buy serial responsiveness: the render task is
+  // pinned to core 0, and stripping loop()'s slack starves IDLE0 and trips the task
+  // watchdog ("IDLE0 (CPU 0)" + "CPU 0: render"), which aborted the Board on
+  // 2026-10-02. The RX buffer (set in setup) is what makes a long command survive a
+  // slow loop iteration, not a shorter delay.
+  for (int i = 0; i < 8; i++) { checkSerialCmd(); if (!Serial.available()) break; }
   checkButton();
-  checkSerialCmd();
 
   int idx;
-  if (xQueueReceive(readyQ, &idx, portMAX_DELAY) == pdTRUE) {
+  if (xQueueReceive(readyQ, &idx, pdMS_TO_TICKS(kFrameWaitMs)) == pdTRUE) {
     sprites[idx]->pushSprite(0, 0);
     xQueueSend(freeQ, &idx, 0);
     fps_n++;
   }
 
   tickLogic();   // data poll cadence, idle->standby, weather refresh, wifi backstop
+
+  // Second serial service: xQueueReceive above blocks until a frame is ready, so a
+  // command that arrives during that wait is not seen until the next iteration.
+  // Checking again here (and once more at the top) bounds the worst-case latency
+  // without touching the render cadence.
+  for (int i = 0; i < 8; i++) { checkSerialCmd(); if (!Serial.available()) break; }
 
   if (millis() - t0 > 5000) {
     Serial.printf("[tick] scene=%d (%s) pushed=%lu render=%lums\n",

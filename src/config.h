@@ -84,9 +84,60 @@ void        cfgSetWeatherLocation(const char* v);
 void        cfgClearWeatherLocation(void);
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
-// Wipe every runtime value, returning all fields to their Factory defaults.
-// (Ticket #2 wires this to a FACTORY serial command; ticket #1 uses it in tests.)
+// Wipe every runtime value IN RAM ONLY, returning all fields to their Factory
+// defaults. This does NOT touch the backing store — use cfgFactoryReset() to clear
+// stored values (it wipes the store and reboots). cfgLoad() would restore them.
 void cfgReset(void);
+
+// ── Persistence (ticket #2) ──────────────────────────────────────────────────
+// Load stored values from NVS into RAM. Call ONCE, early in setup(), before anything
+// reads a getter. With nothing stored this is a no-op and every getter returns its
+// Factory default — which is what makes a fresh Board behave as it always did.
+void cfgLoad(void);
+
+// True when this field holds a value that came from the store rather than a Factory
+// default. Used for the boot report and cfgPrintReport(); nothing in the fetch path
+// needs it, which is the point of the seam.
+bool cfgWifiIsStored(void);
+bool cfgServerHostIsStored(void);
+bool cfgWeatherIsStored(void);
+bool cfgServerPortIsStored(void);
+
+// Persist the fields that changed. Saving per GROUP (rather than one call per setter)
+// keeps the NVS write count low: flash writes are slow and each one is a chance to
+// interrupt the radio. Nothing here reboots the Board — see cfgFactoryReset.
+void cfgSaveWifi(void);
+void cfgSaveServer(void);
+void cfgSaveWeather(void);
+
+// Print the EFFECTIVE configuration, and where each value came from (stored vs
+// Factory default vs not set). Never prints the password or the API key: this output
+// ends up in logs and screenshots.
+void cfgPrintReport(void);
+
+// Recovery path for the FACTORY command: wipe the backing store, then reboot so the
+// Board comes up on the Factory defaults. Does not return.
+//
+// Why reboot rather than reconnect in place: the credentials are read once, at boot,
+// and several things derive from them (the resolved Server URL, mDNS, the weather
+// client). Re-reading them in place would mean re-running that whole boot path while
+// the render task and the WiFi driver are live — on a Board with a documented history
+// of WiFi-driver instability under load. A reboot is the boring, reliable answer.
+void cfgFactoryReset(void);
+
+#ifdef CFG_HOST_TEST
+// Host-test-only hooks. The host build cannot touch NVS or reboot, so it substitutes
+// an in-memory store and records reboot requests, letting the persistence and
+// recovery rules be tested off-Board. Not compiled into the firmware.
+void cfgTestWipe(void);
+bool cfgTestRebootRequested(void);
+void cfgTestClearReboot(void);
+// Change what an UNSET field resolves to. This is how a test proves that a save did
+// not freeze the old default: rotate the default between the save and the reload and
+// check which one the reload picked up.
+void cfgTestSetFactoryPass(const char* v);
+void cfgTestSetFactoryIp(const char* dotted);
+#endif
 
 #ifdef __cplusplus
 }

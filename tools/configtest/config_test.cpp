@@ -139,6 +139,138 @@ int main() {
   check(strlen(cfgWifiSsid()) == 63, "an over-long value truncates to the buffer limit");
   check(strncmp(cfgWifiSsid(), big, 63) == 0, "and truncation keeps the leading bytes");
 
+  // ── 9. PERSISTENCE (ticket #2). The rule that matters: a value that was stored
+  //       comes back after a reload, and one that was NEVER stored does not become
+  //       stored merely because something else was saved (per-field persistence). ──
+  printf("\nConfig seam — persistence\n");
+
+  // Start from a clean Board and store only WiFi.
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("stored-net");
+  cfgSetWifiPass("stored-pass");
+  cfgSaveWifi();
+
+  // Simulate a reboot: RAM is cleared, then cfgLoad() repopulates from the store.
+  cfgReset();
+  check_str(cfgWifiSsid(), "factory-ssid", "before cfgLoad the RAM state is the default");
+  cfgLoad();
+  check_str(cfgWifiSsid(), "stored-net", "a stored SSID survives a reload");
+  check_str(cfgWifiPass(), "stored-pass", "a stored password survives a reload");
+  check_str(cfgServerHost(), "factory-host", "an UNSTORED field still falls back (per-field)");
+  check_str(cfgWeatherLocation(), "factory-place", "another unstored field still falls back");
+
+  // Storing WiFi alone must not silently persist the Server's current effective
+  // value: that would freeze today's Factory default into the store.
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("only-wifi"); cfgSaveWifi();
+  cfgReset(); cfgLoad();
+  check(cfgServerIpState() == CFG_IP_UNSET,
+        "saving WiFi alone leaves the Server IP UNSET (not frozen to the Factory default)");
+  check(!cfgServerHostIsStored(),
+        "saving WiFi alone does not mark the Server host as stored");
+  check(!cfgServerPortIsStored(),
+        "saving WiFi alone does not mark the Server port as stored");
+
+  // The same trap for the PASSWORD: "SETWIFI NewNet" must not freeze the Factory
+  // default password into the store, or a later secrets.h change would be ignored
+  // and the Board would keep trying a password nobody chose.
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("net-without-pass"); cfgSaveWifi();   // password never set
+  cfgReset(); cfgLoad();
+  check(cfgWifiIsStored(), "the SSID is stored");
+  check(cfgWifiPass()[0] != 0, "the password still resolves to something (the default)");
+  // Reset the Factory default to a NEW value and reload: a frozen copy would keep the
+  // OLD default, which is exactly the failure this guards against.
+  // (The test build's default is compile-time, so instead assert the store has no
+  //  pass key by checking that saving an unrelated field leaves the pass unset.)
+  cfgReset(); cfgTestWipe();
+  cfgSetServerHost("h"); cfgSaveServer();
+  cfgReset(); cfgLoad();
+  check(strcmp(cfgWifiPass(), "factory-pass") == 0,
+        "an unstored password follows the Factory default, not a frozen copy");
+
+  // An explicitly EMPTY password DOES persist (it is a deliberate choice).
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("open-net"); cfgSetWifiPass(""); cfgSaveWifi();
+  cfgReset(); cfgLoad();
+  check_str(cfgWifiPass(), "", "an explicitly empty password persists as empty");
+
+  // ── 9b. THE FREEZE TRAP, tested directly. Saving a group must persist only the
+  //        fields that were SET. Storing the RESOLVED value instead writes the Factory
+  //        default into the store as if it had been chosen, which (a) makes a later
+  //        secrets.h change invisible and (b) flips an UNSET field to SET, breaking
+  //        the per-field rule.
+  //
+  //        The trick: change what "unset" RESOLVES TO between the save and the reload.
+  //        A frozen copy keeps the old value; a correct implementation follows the new
+  //        default. Earlier tests missed this bug because they only inspected the field
+  //        that HAD been set — both code reviews caught that gap, so this closes it.
+  printf("\nConfig seam — a save must not freeze the Factory default\n");
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("net");            // SSID set; password NEVER set
+  cfgSaveWifi();
+  cfgReset();                       // "reboot"
+  cfgTestSetFactoryPass("ROTATED-DEFAULT");
+  cfgLoad();
+  check_str(cfgWifiPass(), "ROTATED-DEFAULT",
+            "an unstored password follows the CURRENT default, not a frozen copy");
+
+  cfgReset(); cfgTestWipe();
+  cfgSetServerHost("host-only");    // host set; IP NEVER set
+  cfgSaveServer();
+  cfgReset();
+  cfgTestSetFactoryIp("10.9.9.9");
+  cfgLoad();
+  check(cfgServerIpState() == CFG_IP_UNSET,
+        "an unstored Server IP stays UNSET after a save (did not freeze to a default)");
+  unsigned char octFrozen[4];
+  cfgServerIpOctets(octFrozen);
+  check(octFrozen[0] == 10 && octFrozen[1] == 9 && octFrozen[2] == 9 && octFrozen[3] == 9,
+        "and it follows the CURRENT Factory default IP");
+
+  // Storing the Server, including an explicitly-empty IP.
+  cfgReset(); cfgTestWipe();
+  cfgSetServerHost("stored-host");
+  cfgSetServerIp("");              // explicit "no fallback"
+  cfgSaveServer();
+  cfgReset(); cfgLoad();
+  check_str(cfgServerHost(), "stored-host", "a stored Server host survives a reload");
+  check(cfgServerIpState() == CFG_IP_EMPTY,
+        "an explicitly EMPTY Server IP survives as EMPTY (not resurrected as unset)");
+
+  // A stored EMPTY password must come back as EMPTY, not as unset. This is the
+  // distinction the feature exists to protect, so it is tested through a reload.
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("net"); cfgSetWifiPass(""); cfgSaveWifi();
+  cfgReset(); cfgLoad();
+  check_str(cfgWifiPass(), "", "a stored EMPTY password reloads as empty, not as the default");
+
+  // Weather.
+  cfgReset(); cfgTestWipe();
+  cfgSetWeatherLocation("Stored Place"); cfgSaveWeather();
+  cfgReset(); cfgLoad();
+  check_str(cfgWeatherLocation(), "Stored Place", "a stored weather location survives a reload");
+
+  // ── 10. FACTORY: wipes the store AND reboots, so the wipe outlives the reboot. ──
+  printf("\nConfig seam — recovery (FACTORY)\n");
+  cfgReset(); cfgTestWipe();
+  cfgSetWifiSsid("bad-net"); cfgSetServerHost("bad-host"); cfgSetWeatherLocation("bad-place");
+  cfgSaveWifi(); cfgSaveServer(); cfgSaveWeather();
+  cfgReset(); cfgLoad();
+  check_str(cfgWifiSsid(), "bad-net", "the bad values are live before the wipe");
+
+  cfgTestClearReboot();
+  cfgFactoryReset();
+  check(cfgTestRebootRequested(), "FACTORY requests a reboot");
+
+  // The reboot is a fresh boot: RAM starts empty and cfgLoad() reads the store.
+  cfgReset();
+  cfgLoad();
+  check_str(cfgWifiSsid(), "factory-ssid", "after FACTORY the SSID is the Factory default");
+  check_str(cfgServerHost(), "factory-host", "after FACTORY the Server host is the Factory default");
+  check_str(cfgWeatherLocation(), "factory-place", "after FACTORY the weather location is the default");
+  check(cfgServerIpState() == CFG_IP_UNSET, "after FACTORY the Server IP is UNSET again");
+
   printf("\n%s\n", g_fail == 0 ? "ALL PASS" : "FAILURES PRESENT");
   return g_fail == 0 ? 0 : 1;
 }
