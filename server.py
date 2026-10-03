@@ -36,9 +36,15 @@ REFRESH = 10
 # The display is a tiny status light: it should say "the LLM is busy right now",
 # not "what happened this week". So the bars are driven by the *last* request
 # (the active 5h window): session_pct = how full that window is, weekly_pct =
-# this model's share of recent tokens. Adjust the window below to your taste.
+# this model's share of recent tokens. Adjust the windows below to your taste.
 ACTIVE_WINDOW_S = 5 * 3600
-RECENT_WINDOW_S = 24 * 3600
+# The window that EVERY number under the "Weekly (7d)" bar comes from: the bar's
+# share, its headline token count, and each model row's `pct`/`tok`. It is 7 days
+# because that is what the UI label promises. Keeping one constant for all of them
+# is the fix for the 14953604% bug: a model's tokens must be measured over the same
+# period they are a share *of*. (Was RECENT_WINDOW_S = 24h, which the label did not
+# match and which broke the share maths.)
+SHARE_WINDOW_S = 7 * 24 * 3600
 
 # ── GPU telemetry (optional, for the GPU row on the usage page) ───────────────
 # The model runs on a *different* box from this one, and that box exposes no HTTP
@@ -170,14 +176,21 @@ def _tokens(row):
 
 
 def llama_usage():
-    """Per-model token counts from a local token log (last N days)."""
+    """Per-model token counts over the bar's own window.
+
+    SHARE_WINDOW_S is the window every number on the usage page comes from. The
+    numerator (a model's tokens) and the denominator (the window total) MUST use the
+    same window: mixing a lifetime numerator with a window denominator is what made
+    the board print weekly=14953604% (fixed 2026-10-02). See
+    tools/test-server-windows.py for the regression cases.
+    """
     now = time.time()
     rows = _read_jsonl(LOG_PATH)
     if not rows:
         return {"cc_ok": False, "cc_error": f"no log at {LOG_PATH}", "tok_models": []}
-    total_recent = 0
+    total_window = 0
     total_active = 0
-    per_model = {}
+    per_model = {}          # window-scoped, matching total_window
     for r in rows:
         ts = r.get("ts") or r.get("time") or r.get("timestamp") or 0
         try:
@@ -186,13 +199,12 @@ def llama_usage():
             ts = now
         tok = _tokens(r)
         model = pretty_model(r.get("model") or r.get("name") or "?")
-        per_model.setdefault(model, 0)
-        per_model[model] += tok
-        if ts >= now - RECENT_WINDOW_S:
-            total_recent += tok
+        if ts >= now - SHARE_WINDOW_S:
+            per_model[model] = per_model.get(model, 0) + tok
+            total_window += tok
         if ts >= now - ACTIVE_WINDOW_S:
             total_active += tok
-    week_tok = total_recent  # the board labels the weekly bar; reuse the recent total
+    week_tok = total_window
 
     models = []
     for name in sorted(per_model, key=lambda m: -per_model[m]):
@@ -200,7 +212,7 @@ def llama_usage():
         models.append({
             "name": name,
             "pct": round(100 * tok / week_tok) if week_tok else 0,
-            "tok": _fmt_tokens(tok),
+            "tok": _fmt_tokens(tok),      # same window as the pct — not lifetime
             "cost": 0.0,
         })
     return {
