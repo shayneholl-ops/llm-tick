@@ -491,22 +491,42 @@ void provRender(uint16_t* buf, int w, int h) {
     // decides. Greyscale has no cast to remove.
     for (int y = 0; y < h; y++) fillRow(buf, w, y, bg);
 
-    // Draw the QR from the cached matrix, centred horizontally.
-    int scale = 4;
+    // ── layout ──────────────────────────────────────────────────────────────────
+    // Three stacked bands, and the QR's size is NOT fixed: it is whatever version the
+    // encoder needed, which depends on the payload length (version 3 / 29x29 for the
+    // current SSID+passphrase, but a longer passphrase would need more). So the QR is
+    // given the leftover height between the title and the credential block rather than
+    // assumed to be 116 px. Assuming it is what broke this screen: when encodeQr()
+    // started returning version 3 instead of version 1, the QR grew by 32 px and pushed
+    // the OPEN line down onto the PROV STOP line, both at y=302, so they overdrew each
+    // other into an unreadable smear.
+    //
+    // TOP-BAND MEANDER GUARD. Display rows 0-59 must stay one uniform colour on this
+    // Panel: the ST7789's last ~60 RAM rows meander in luminance, and a uniform field
+    // has no edges for it to modulate (HANDOFF.md item 2). Both scenes obey this. An
+    // earlier version of this screen drew its title at y=30, which put dark text inside
+    // the guarded band. So every inked row below is >= kTopSafeY.
+    static const int kTopSafeY = 60;      // first row free to carry content
+    static const int kTitleY    = 62;      // title baseline
+    static const int kTitleH    = 22;      // room for the Font4 title beneath it
+    static const int kCredGap   = 10;
+    static const int kLineStep  = 24;      // Font2 line pitch
+    static const int kFooterY   = 300;     // "PROV STOP ..." — the last line, bottom-anchored
+
+    const int qrTop   = kTopSafeY + kTitleH;                   // 82: below title
+    const int credTop = kFooterY - (kLineStep * 2 + 14);       // first WIFI/PASS line
+    int qrBottom      = credTop - kCredGap;
+    int qrAvail       = qrBottom - qrTop;
+    if (qrAvail < 40) qrAvail = 40;                            // never degenerate
+
     int total = (g_qrSize ? g_qrSize : 21) + kQuietModules * 2;
-    if (total * scale > w - 8) scale = (w - 8) / total;
+    int scale = qrAvail / total;                               // fit the HEIGHT
+    if ((w - 8) / total < scale) scale = (w - 8) / total;       // then the width
     if (scale < 3) scale = 3;
 
     int qrPx = total * scale;
     int x0 = (w - qrPx) / 2;
-    // TOP-BAND MEANDER GUARD. Display rows 0-59 must stay one uniform colour on this
-    // Panel: the ST7789's last ~60 RAM rows meander in luminance, and a uniform field
-    // has no edges for it to modulate (HANDOFF.md item 2). Both scenes obey this.
-    // An earlier version of this screen drew its title at y=30, which put dark text
-    // inside the guarded band and reintroduced the flicker this guard exists to
-    // prevent. So EVERY inked row below is >= kTopSafeY.
-    static const int kTopSafeY = 60;      // first row free to carry content
-    int y0 = 96;                          // QR top, below the guard and the title
+    int y0 = qrTop + (qrAvail - qrPx) / 2;                     // centre in the band
 
     if (g_qrSize) {
         for (int my = 0; my < g_qrSize; my++) {
@@ -520,19 +540,20 @@ void provRender(uint16_t* buf, int w, int h) {
         }
     }
 
-    // Title above the QR, credentials below it. Every y here is >= kTopSafeY.
-    drawCentered(kTopSafeY + 2, ink, 4, "PROVISIONING");
+    // Title above the QR, credentials below it. Every y here is >= kTopSafeY, and the
+    // three credential lines occupy their own precomputed band so they can never land
+    // on the footer or on each other, whatever version the encoder picked.
+    drawCentered(kTitleY, ink, 4, "PROVISIONING");
 
-    int ty = y0 + qrPx + 10;
     char line[64];
     snprintf(line, sizeof(line), "WIFI  %s", PROV_AP_SSID);
-    drawCentered(ty, ink, 2, line);
+    drawCentered(credTop, ink, 2, line);
     snprintf(line, sizeof(line), "PASS  %s", PROV_AP_PASS);
-    drawCentered(ty + 24, ink, 2, line);
+    drawCentered(credTop + kLineStep, ink, 2, line);
 
     const char* ip = provApIp();
     snprintf(line, sizeof(line), "OPEN  http://%s/", (ip && *ip) ? ip : "192.168.4.1");
-    drawCentered(ty + 48, ink, 2, line);
+    drawCentered(credTop + kLineStep * 2, ink, 2, line);
 
-    drawCentered(h - 18, ink, 0, "PROV STOP  to leave");
+    drawCentered(kFooterY, ink, 0, "PROV STOP  to leave");
 }

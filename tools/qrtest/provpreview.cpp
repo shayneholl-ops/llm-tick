@@ -43,26 +43,40 @@ static void drawTextBlock(std::vector<uint8_t>& img, int cx, int y, const char* 
 int main(int argc, char** argv) {
     const char* out = argc > 1 ? argv[1] : "prov.ppm";
 
-    // ── encode, exactly as the firmware does ──
+    // ── encode, exactly as the firmware does (src/prov.cpp::encodeQr) ──
     char payload[128];
-    snprintf(payload, sizeof(payload), "WIFI:T:WPA;S:%s;P:%s;;", kSsid, kPass);
+    snprintf(payload, sizeof(payload), "WIFI:T:WPA2;S:%s;P:%s;;", kSsid, kPass);
     static uint8_t qbuf[33 * 33];
     QRCode qr;
-    int size = 0;
+    // ECC_LOW byte-mode capacity per version, from the library's own tables.
+    static const uint8_t kEccLowByteCapacity[5] = { 0, 17, 32, 53, 78 };
+    const size_t need = strlen(payload);
+    uint8_t ver = 0;
     for (uint8_t v = 1; v <= 4; v++) {
-        if (qrcode_getBufferSize(v) > sizeof(qbuf)) break;
-        if (qrcode_initText(&qr, qbuf, v, ECC_LOW, payload) == 0) { size = qr.size; break; }
+        if (need <= kEccLowByteCapacity[v]) { ver = v; break; }
     }
-    if (!size) { fprintf(stderr, "encode failed\n"); return 1; }
+    if (ver == 0) { fprintf(stderr, "payload too large\n"); return 1; }
+    if (qrcode_initText(&qr, qbuf, ver, ECC_LOW, payload) != 0) {
+        fprintf(stderr, "encode failed at version %u\n", ver);
+        return 1;
+    }
+    int size = qr.size;
 
     // ── layout, mirrored from provRender() ──
-    int scale = 4;
+    static const int kTopSafeY = 60, kTitleY = 62, kTitleH = 22;
+    static const int kCredGap = 10, kLineStep = 24, kFooterY = 300;
+
+    const int qrTop   = kTopSafeY + kTitleH;
+    const int credTop = kFooterY - (kLineStep * 2 + 14);
+    int qrAvail       = (credTop - kCredGap) - qrTop;
+    if (qrAvail < 40) qrAvail = 40;
     int total = size + kQuietModules * 2;
-    if (total * scale > W - 8) scale = (W - 8) / total;
+    int scale = qrAvail / total;
+    if ((W - 8) / total < scale) scale = (W - 8) / total;
     if (scale < 3) scale = 3;
     int qrPx = total * scale;
     int x0 = (W - qrPx) / 2;
-    int y0 = 96;
+    int y0 = qrTop + (qrAvail - qrPx) / 2;
 
     // 0 = background (white), 1 = ink (black)
     std::vector<uint8_t> img((size_t)W * H, 0);
@@ -78,16 +92,14 @@ int main(int argc, char** argv) {
                 }
         }
 
-    drawTextBlock(img, W / 2, 30, "SETUP MODE", W, H, 3);
-    drawTextBlock(img, W / 2, 64, "scan to join", W, H, 1);
-    int ty = y0 + qrPx + 10;
+    drawTextBlock(img, W / 2, kTitleY, "PROVISIONING", W, H, 2);
     char line[64];
     snprintf(line, sizeof(line), "WIFI  %s", kSsid);
-    drawTextBlock(img, W / 2, ty, line, W, H, 2);
+    drawTextBlock(img, W / 2, credTop, line, W, H, 2);
     snprintf(line, sizeof(line), "PASS  %s", kPass);
-    drawTextBlock(img, W / 2, ty + 24, line, W, H, 2);
-    drawTextBlock(img, W / 2, ty + 48, "OPEN  http://192.168.4.1/", W, H, 2);
-    drawTextBlock(img, W / 2, H - 18, "PROV STOP to leave", W, H, 1);
+    drawTextBlock(img, W / 2, credTop + kLineStep, line, W, H, 2);
+    drawTextBlock(img, W / 2, credTop + kLineStep * 2, "OPEN  http://192.168.4.1/", W, H, 2);
+    drawTextBlock(img, W / 2, kFooterY, "PROV STOP  to leave", W, H, 1);
 
     FILE* f = fopen(out, "wb");
     if (!f) { fprintf(stderr, "cannot write %s\n", out); return 1; }
@@ -99,9 +111,13 @@ int main(int argc, char** argv) {
     }
     fclose(f);
 
-    printf("wrote %s: QR %dx%d modules at %d px/module (%d px), origin (%d,%d)\n",
-           out, size, size, scale, qrPx, x0, y0);
-    printf("text rows: title 30, hint 64, wifi %d, pass %d, open %d, footer %d\n",
-           ty, ty + 24, ty + 48, H - 18);
+    printf("wrote %s\n", out);
+    printf("  payload   : %u B -> version %u (%dx%d modules)\n",
+           (unsigned)need, ver, size, size);
+    printf("  QR        : %d px at %d px/module, y %d..%d\n", qrPx, scale, y0, y0 + qrPx);
+    printf("  text rows : title %d, wifi %d, pass %d, open %d, footer %d\n",
+           kTitleY, credTop, credTop + kLineStep, credTop + kLineStep * 2, kFooterY);
+    if (y0 + qrPx > credTop - 4)
+        printf("  WARNING: QR overruns the credential block\n");
     return 0;
 }
