@@ -453,7 +453,7 @@ void setup() {
 
   // Resume Provisioning BEFORE the boot fetch below. Provisioning is a deliberate
   // state and survives a reset, and while it runs the radio belongs to the phone: a
-  // boot fetch here would be a poll outside the gate, competing with the setup page.
+  // boot fetch here would be a poll outside the gate, competing with the Provisioning page.
   provRestoreIfSaved();
   // Then the one automatic entry ADR-0001 sanctions: a Board that has NEVER been
   // provisioned cannot connect to anything, so it offers the setup path immediately
@@ -494,9 +494,9 @@ void loop() {
     fps_n++;
   }
 
-  tickLogic();   // data poll cadence, idle->standby, weather refresh, wifi backstop
+  tickLogic();   // data poll cadence, usage->standby, weather refresh, wifi backstop
 
-  // Serve the setup page while Provisioning runs. The usage/weather poll is gated off
+  // Serve the Provisioning page while Provisioning runs. The usage/weather poll is gated off
   // inside tickLogic() (the radio belongs to the phone), so this is the only network
   // work happening.
   provTick();

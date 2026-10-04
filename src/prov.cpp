@@ -159,7 +159,7 @@ static void handleCfg() {
 static void handleNotFound() {
     // Captive-portal nudge: phones probe for a known URL (Apple: /hotspot-detect.html,
     // Android: /generate_204) to decide whether a network needs a sign-in page.
-    // Answering anything unknown with a 302 to the setup page is what makes the
+    // Answering anything unknown with a 302 to the Provisioning page is what makes the
     // "Sign in to network" sheet appear — without it, joining the AP looks like it
     // worked but nothing opens, which reads as "no IP redirect".
     g_server->sendHeader("Location", PROV_AP_URL, true);
@@ -307,10 +307,14 @@ void provTick() {
         Serial.printf("[prov] stations -> %d\n", st);
         lastStations = st;
     }
-    // STACK WATCHDOG. handleClient() runs on the Arduino loopTask, and that task's
-    // stack was the thing that overflowed when a client connected (StoreProhibited,
-    // EXCVADDR 0x0b, exactly on association). Report the high-water mark while a client
-    // is attached, so a regression shows up as a number rather than as a panic.
+    // STACK WATCHDOG. handleClient() runs wherever the Arduino entry point runs, and
+    // that is NOT the same task in both environments: the plain-Arduino build runs
+    // loop() on its own loopTask (which is why ARDUINO_LOOP_STACK_SIZE=16384 is in
+    // platformio.ini), while esp32-arduino-as-IDF runs setup()/loop() on ESP-IDF's
+    // "main" task. Reporting uxTaskGetStackHighWaterMark(nullptr) therefore measures
+    // whichever one this build uses, which is the one that actually matters here. It is
+    // printed while a client is attached so a regression shows up as a number rather
+    // than as a panic.
     if (st > 0) {
         static unsigned long last = 0;
         unsigned long now = millis();
