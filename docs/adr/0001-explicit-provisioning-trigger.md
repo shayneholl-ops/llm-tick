@@ -95,6 +95,45 @@ one radio cannot be on two channels at once and AP+STA binds the AP to the stati
 - **On exit from Provisioning in any direction**, channel 1 is restored and the AP is
   torn down — the unpinned state never outlives the phase.
 
+## Amendment 4 (2026-10-03): write BEFORE verifying, and gate Provisioned on success
+
+The parent ticket said "write, then verify", but also that a refused submit must leave
+nothing committed, and those conflict. Resolved in favour of write-first, with the safety
+of write-last's invariant relocated to a single flag rather than to the whole store.
+
+- **Validate → refuse → write nothing.** Unchanged, and still true: `provValidate()` runs
+  before any write, so a *rejected* submit still commits nothing. That AC is untouched.
+- **Then write the entered values, then verify.** A failed verification is not a rejected
+  submit — the values were accepted, and the network is what refused them.
+- **The `Provisioned` flag is set ONLY on a successful verify.** This is the invariant
+  that makes write-first safe, and it is the whole safety argument: NVS may hold
+  credentials that do not work, but nothing outside Provisioning ever consults them,
+  because only this flag moves the Board out of Provisioning. Set it at write time and a
+  failed verify would leave the Board believing it was provisioned — which is precisely
+  the lockout this ticket exists to prevent.
+
+Two consequences, both deliberate:
+
+- **A failed verify leaves the entered values committed, so they are still in the form
+  after a reload.** Under write-last they would exist only in the POST body, and the
+  values would survive only as long as the operator did not reload — phones reload pages
+  constantly on rotation and on returning from the background. The AC asks for the
+  entered values to stay in the form; write-first satisfies that for the page's whole
+  life rather than only for the response that carried them.
+- **A power cut mid-verify loses nothing the operator typed.** The Board reboots into
+  Provisioning with the form pre-filled with their entry, so recovery is one tap on Save.
+  Under write-last that entry is gone and must be retyped.
+
+The accepted cost: a failed verify has written something. That cost is bounded because
+the fields are independent and lazily resolved — the weather location is a string that
+#9 resolves once a connection exists, so committing it early cannot be wrong. The fields
+that must never be committed wrongly are the WiFi credentials, and those are safe because
+the `Provisioned` flag gates every reader of them.
+
+Rejected: write-last. It is the more conservative ordering and it would have removed the
+partial-commit class outright, but it makes the failure page correct only for the
+response that carried the values, and loses the operator's typing to a power cut.
+
 ## Amendment 2 (2026-10-03): a fourth entry path exists
 
 **Contradicts the Decision below**, which admits entry only for a never-provisioned
