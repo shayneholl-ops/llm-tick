@@ -1,7 +1,7 @@
 // prov.cpp — the Provisioning state. See prov.h for the rules it implements.
 //
 // Two halves:
-//   1. the Setup AP + the placeholder web page (radio side)
+//   1. the Setup AP + the provisioning web page (radio side)
 //   2. the Panel screen: a QR on a flat background (drawing side)
 //
 // The QR matrix is built ONCE, when Provisioning is entered, and cached — rendering it
@@ -122,14 +122,35 @@ static bool encodeQr() {
 // into values, call the seam, render the result. Keeping it thin is what lets the rules
 // that actually matter be tested in seconds instead of a flash cycle.
 
-static void sendForm(const char* notice, bool isError) {
-    std::string page = provBuildForm(provFormCurrentValues(), notice, isError);
+static void sendForm(const prov_form_values_t& v, const char* notice, bool isError) {
+    std::string page = provBuildForm(v, notice, isError);
     g_server->send(200, "text/html", page.c_str());
 }
 
 static void handleRoot() {
     Serial.printf("[prov] GET /        from %s\n", g_server->client().remoteIP().toString().c_str());
-    sendForm(nullptr, false);
+    sendForm(provFormCurrentValues(), nullptr, false);
+}
+
+// Copy a request argument into caller-owned storage.
+//
+// WHY THIS EXISTS, and why it is not optional: `WebServer::arg()` returns `String` BY
+// VALUE. Writing
+//     v.ssid = g_server->arg("ssid").c_str();
+// leaves v.ssid pointing into a temporary that is destroyed at the end of that
+// statement, so the pointer is already dangling before the next line runs. It reads
+// correctly far more often than not — an ABSENT argument returns a String backed by a
+// shared static empty buffer — so the failure only shows up for a non-empty field whose
+// heap gets reused by the very next allocation, which is exactly what provApply() does.
+//
+// This is the same defect class as the g_ipText bug this slice already fixed, in the one
+// place the host tests cannot reach: the seam is testable, this wiring is not.
+static void copyArg(const char* name, char* dst, size_t cap) {
+    String raw = g_server->arg(name);
+    raw.trim();                       // a trailing space in an HTML field is not a value
+    if (raw.length() >= cap) raw = raw.substring(0, cap - 1);
+    strncpy(dst, raw.c_str(), cap - 1);
+    dst[cap - 1] = '\0';
 }
 
 // POST / — validate, store, and re-render the form.
@@ -138,23 +159,46 @@ static void handleRoot() {
 // next slice, and this one is the zero-radio-risk slice. The operator can confirm their
 // values persisted by reloading, which is what makes it demoable on its own.
 //
-// A refused submit re-renders with the operator's OWN values still in the boxes (passed
-// back in) rather than the stored ones, so a typo is correctable in place instead of
-// being silently discarded — the anti-lockout property the whole feature exists for.
+// A refused submit re-renders with the operator's OWN values still in the boxes, not the
+// stored ones, so a typo is correctable in place instead of being silently discarded —
+// the anti-lockout property the whole feature exists for (docs/spec/f2-web-provisioning.md:
+// "keep the entered values in the form"). The passphrase is among the values passed back,
+// and provBuildForm() never renders it, so passing it here leaks nothing.
 static void handlePost() {
     Serial.printf("[prov] POST /       from %s\n", g_server->client().remoteIP().toString().c_str());
 
+    // STATIC, not local: provApply() and provBuildForm() both read these after this
+    // function's frame is gone from consideration, and nothing here is re-entrant (the
+    // web server handles one request at a time on this Board).
+    static char ssidBuf[64], passBuf[80], hostBuf[80], ipBuf[32], weatherBuf[80];
+    static char oSsidBuf[64], oHostBuf[80], oIpBuf[32], oWeatherBuf[80];
+
+    copyArg("ssid",    ssidBuf,    sizeof(ssidBuf));
+    copyArg("pass",    passBuf,    sizeof(passBuf));
+    copyArg("host",    hostBuf,    sizeof(hostBuf));
+    copyArg("ip",      ipBuf,      sizeof(ipBuf));
+    copyArg("weather", weatherBuf, sizeof(weatherBuf));
+
+    // What the form was DISPLAYING when the operator submitted it, per provApply()'s
+    // contract. A missing or tampered hidden field falls back to the submitted value, so
+    // the worst case is "store what was typed" rather than "store nothing".
+    copyArg("o_ssid",    oSsidBuf,    sizeof(oSsidBuf));
+    copyArg("o_host",    oHostBuf,    sizeof(oHostBuf));
+    copyArg("o_ip",      oIpBuf,      sizeof(oIpBuf));
+    copyArg("o_weather", oWeatherBuf, sizeof(oWeatherBuf));
+
     prov_form_values_t v;
-    v.ssid    = g_server->arg("ssid").c_str();
-    v.pass    = g_server->arg("pass").c_str();
-    v.host    = g_server->arg("host").c_str();
-    v.ip      = g_server->arg("ip").c_str();
-    v.weather = g_server->arg("weather").c_str();
+    v.ssid = ssidBuf; v.pass = passBuf; v.host = hostBuf;
+    v.ip = ipBuf;     v.weather = weatherBuf;
+
+    prov_form_values_t orig;
+    orig.ssid = oSsidBuf; orig.pass = ""; orig.host = oHostBuf;
+    orig.ip = oIpBuf;     orig.weather = oWeatherBuf;
 
     prov_form_error_t err = PROV_FORM_OK;
-    if (!provApply(v, &err)) {
+    if (!provApply(v, orig, &err)) {
         Serial.printf("[prov] submit REFUSED (error %d) — nothing stored\n", (int)err);
-        sendForm(provFormErrorText(err), true);
+        sendForm(v, provFormErrorText(err), true);   // typed values kept, not the stored ones
         return;
     }
 
@@ -167,21 +211,20 @@ static void handlePost() {
     // Re-render from the stored config rather than echoing the submission back, so what
     // the operator now sees is what the Board actually holds (including a blank passphrase
     // coming back blank, which is correct).
-    sendForm(provFormErrorText(PROV_FORM_OK), false);
+    sendForm(provFormCurrentValues(), provFormErrorText(PROV_FORM_OK), false);
 }
 
-// The page reads this. Deliberately NOT the passphrase or the API key — this handler is
-// reachable by anyone on the Setup AP.
-static void handleCfg() {
-    Serial.printf("[prov] GET /cfg     from %s\n", g_server->client().remoteIP().toString().c_str());
-    char json[256];
-    snprintf(json, sizeof(json),
-             "{\"ssid\":\"%s\",\"server\":\"%s\",\"ip\":\"%s\",\"weather\":\"%s\"}",
-             cfgWifiSsid(), cfgServerHost(),
-             cfgServerIpIsSet() ? "(set)" : "(none)",   // never echo the real octets
-             cfgWeatherLocation());
-    g_server->send(200, "application/json", json);
-}
+// NOTE: the old GET /cfg JSON endpoint is GONE, deliberately.
+//
+// It existed only to feed the placeholder page's JavaScript, which the form replaced. Left
+// registered it would have become a liability rather than dead weight: it built JSON with
+// snprintf and NO escaping, and while its inputs were Factory defaults that was harmless —
+// but the form makes them operator-supplied, reachable by anyone on the Setup AP. A
+// hostname containing a quote would produce malformed JSON, and three 63-character fields
+// could overflow the fixed buffer mid-string.
+//
+// If a machine-readable view is wanted later it should be added deliberately, with
+// escaping, rather than inherited from a page that no longer exists.
 
 static void handleNotFound() {
     // Captive-portal nudge: phones probe for a known URL (Apple: /hotspot-detect.html,
@@ -276,7 +319,6 @@ bool provStart() {
         if (g_server) {
             g_server->on("/", handleRoot);
             g_server->on("/", HTTP_POST, handlePost);
-            g_server->on("/cfg", handleCfg);
             // Captive-portal probes, answered with a redirect so the OS offers the page.
             // Apple, Android and Windows each use a different URL; without these the
             // phone joins the AP and then appears to do nothing.

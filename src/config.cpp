@@ -280,14 +280,24 @@ void cfgSaveWifi(void) {
 }
 
 void cfgSaveServer(void) {
-    storePut(kKeyHost, cfgServerHost());
+    // The same rule as cfgSaveWifi above, and it was being broken here: writing the
+    // RESOLVED hostname would pin today's Factory default into the store even when the
+    // caller never touched the field. The symptom was invisible in RAM and only appeared
+    // at the next boot — a WiFi-only save left the hostname reading UNSET until cfgLoad()
+    // ran, then reported it STORED, and a later secrets.h edit was silently ignored.
+    // (Found by a code review of the provisioning form, ticket #7.)
+    if (g_host.set) storePut(kKeyHost, g_host.v);
     // The raw state, not the resolved value: an explicitly-empty IP must persist AS
     // empty (meaning "no fallback"), while an unset one must stay unset.
     if (g_ip.set) storePut(kKeyIp, g_ip.v);
     if (g_port) storePutU16(kKeyPort, g_port);
 }
 
-void cfgSaveWeather(void) { storePut(kKeyLoc, cfgWeatherLocation()); }
+void cfgSaveWeather(void) {
+    // Same rule: never freeze the Factory default into the store for a field the caller
+    // did not set.
+    if (g_loc.set) storePut(kKeyLoc, g_loc.v);
+}
 
 // Setters that do NOT persist on their own — cfgSave* is the single write point, so a
 // caller cannot half-commit a change by setting a field and forgetting to save it.
@@ -330,3 +340,6 @@ void cfgPrintReport(void) {
     Serial.printf("[cfg]   weather   : '%s'   [%s]\n", cfgWeatherLocation(), srcLoc);
 }
 #endif
+
+
+

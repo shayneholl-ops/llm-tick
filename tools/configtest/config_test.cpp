@@ -42,6 +42,25 @@ int main() {
   check_str(cfgWeatherLocation(), "factory-place", "unset weather location falls back");
   check(cfgServerPort() == 8266, "Server port comes from the Factory default");
 
+  // ── 1b. A save must never FREEZE a Factory default into the store. ──
+  // cfgSaveWifi() has always guarded this ("persist ONLY what was actually set"), but
+  // cfgSaveServer() and cfgSaveWeather() did not, so calling either while a field was
+  // still unset wrote the resolved Factory default into the store as if it were a
+  // deliberate choice. The damage is invisible until the next boot, because setup()
+  // calls cfgLoad(): the field then reads STORED and a later secrets.h edit is ignored.
+  // Found by a code review of the provisioning form (ticket #7).
+  printf("\nConfig seam — a save must not pin a Factory default\n");
+  cfgReset(); cfgTestWipe();
+  cfgSaveServer();
+  cfgSaveWeather();
+  cfgReset(); cfgLoad();
+  check(!cfgServerHostIsStored(),
+        "cfgSaveServer does not pin the hostname's Factory default");
+  check(!cfgWeatherIsStored(),
+        "cfgSaveWeather does not pin the weather Factory default");
+  check_str(cfgServerHost(), "factory-host",
+            "and the hostname still resolves to the Factory default after a reboot");
+
   // ── 2. THE DISTINCTION: an explicitly empty value must NOT fall back, and the
   //       seam must be able to TELL unset from empty (not just behave differently). ──
   printf("\nConfig seam — the distinction the feature depends on\n");

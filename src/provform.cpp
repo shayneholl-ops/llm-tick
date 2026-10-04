@@ -1,10 +1,11 @@
 // provform.cpp — see provform.h for why this is a separate, Arduino-free translation unit.
 //
-// Every buffer here is bounded. The page is assembled into a std::string with snprintf,
-// which cannot overrun: the values interpolated into it are the five config fields, each
-// of which provValidate() has already length-checked by the time any of them is stored.
-// Rendering an over-long value would still be possible if this were reachable with
-// unvalidated input, so provBuildForm() truncates defensively as well.
+// The page is assembled by string CONCATENATION, not snprintf: the only formatted value
+// is the Server IP in provFormCurrentValues(), and the five form fields are appended
+// through esc(), which cannot overrun because it grows the string. Values reach
+// provBuildForm() pre-validated on the POST path, but the GET path renders whatever is
+// currently configured with no validation in between — so the renderer is bounded by
+// construction rather than by trusting its callers.
 #include "provform.h"
 
 #include <cstdio>
@@ -16,10 +17,15 @@
 // 32 is the 802.11 SSID limit; 63 is the WPA2 passphrase limit. A form that accepts more
 // stores a value the radio cannot use, and the operator only finds out at connect time —
 // which is exactly the failure this ticket's follow-on slice is about.
+//
+// The three config limits are 63, NOT 64, because the seam's own OptStr is
+// `char v[64]` and store() truncates at kMaxLen - 1 = 63. A limit of 64 here would accept
+// a 64-character weather location and then silently store 63 — the operator would see the
+// value they typed come back changed, with no error anywhere. Match the seam exactly.
 static const size_t kMaxSsid    = 32;
 static const size_t kMaxPass    = 63;
 static const size_t kMaxHost    = 63;
-static const size_t kMaxWeather = 64;
+static const size_t kMaxWeather = 63;
 
 static const char* nz(const char* s) { return s ? s : ""; }
 static size_t      len(const char* s) { return strlen(nz(s)); }
@@ -40,6 +46,16 @@ static std::string esc(const char* s) {
         }
     }
     return out;
+}
+
+// One hidden input carrying a pre-filled value back with the submit.
+static std::string hidden(const char* name, const char* value) {
+    std::string s = "<input type=\"hidden\" name=\"";
+    s += name;
+    s += "\" value=\"";
+    s += esc(value);
+    s += "\">";
+    return s;
 }
 
 const char* provFormErrorText(prov_form_error_t err) {
@@ -103,7 +119,7 @@ std::string provBuildForm(const prov_form_values_t& v,
     p +=
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<title>llm-tick setup</title><style>"
+        "<title>llm-tick provisioning</title><style>"
         "body{font-family:system-ui,-apple-system,sans-serif;margin:1rem;line-height:1.4;"
         "max-width:34rem;color:#111}"
         "h1{font-size:1.25rem;margin:0 0 .25rem}"
@@ -119,7 +135,7 @@ std::string provBuildForm(const prov_form_values_t& v,
         "border:0;border-radius:6px;background:#111;color:#fff;font-weight:600}"
         "</style></head><body>";
 
-    p += "<h1>llm-tick setup</h1>";
+    p += "<h1>llm-tick provisioning</h1>";
     p += "<p class=\"lead\">Saved on the Board itself. It stays on this network "
          "until you finish &mdash; nothing is connected yet.</p>";
 
@@ -165,6 +181,21 @@ std::string provBuildForm(const prov_form_values_t& v,
          "<p class=\"hint\">A place name, e.g. <code>Vancouver</code>. Blank for no weather.</p>";
 
     p += "<button type=\"submit\">Save to the Board</button>";
+
+    // WHAT THE OPERATOR WAS SHOWN, carried back with the submit.
+    //
+    // These hidden fields are how "I only changed WiFi" becomes knowable. Without them the
+    // server cannot tell a field the operator edited from one they merely left as it was
+    // pre-filled, and storing the pre-filled value would freeze today's Factory default
+    // into NVS as if it had been chosen — so a later secrets.h edit would be ignored.
+    //
+    // The passphrase is deliberately absent: it is never pre-filled, so there is nothing
+    // to compare against and nothing to leak.
+    p += hidden("o_ssid", v.ssid);
+    p += hidden("o_host", v.host);
+    p += hidden("o_ip", v.ip);
+    p += hidden("o_weather", v.weather);
+
     p += "</form></body></html>";
     return p;
 }
@@ -215,43 +246,47 @@ bool provValidate(const prov_form_values_t& v, prov_form_error_t* err) {
     return local == PROV_FORM_OK;
 }
 
-bool provApply(const prov_form_values_t& v, prov_form_error_t* err) {
-    if (!provValidate(v, err)) return false;
+bool provApply(const prov_form_values_t& sub,
+               const prov_form_values_t& orig,
+               prov_form_error_t* err) {
+    if (!provValidate(sub, err)) return false;
 
-    // WHAT A BLANK MEANS, PER FIELD
-    //
-    // The form PRE-FILLS every field except the passphrase. That is what makes
-    // per-field fallback work: an operator who changes only WiFi still submits the
-    // Server's current values, so writing them back is idempotent and the Server is
-    // untouched in effect. "Only WiFi changed" is a statement about what the operator
-    // EDITED, not about which fields arrived blank.
-    //
-    // Given that, each field's blank has to mean exactly one thing:
-    //
-    //   ssid     blank -> leave it. A Board with no SSID can never connect, so clearing
-    //                    it is never a sensible intent and there is no "no SSID" state.
-    //   pass     blank -> KEEP the stored one. This is the exception that forces the
-    //                    pre-fill asymmetry: the passphrase is deliberately never
-    //                    rendered, so the form cannot send it back, so a blank must mean
-    //                    "unchanged" rather than "store an empty password". Storing an
-    //                    empty passphrase would leave the Board unable to join any
-    //                    secured network.
-    //   host     blank -> leave it, for the same reason as the SSID.
-    //   ip       blank -> EXPLICITLY EMPTY, meaning "no static fallback". This one is a
-    //                    real instruction rather than an absence of one: the AC requires
-    //                    that blanking it does NOT fall back to the Factory default,
-    //                    because that silently points the Board at the wrong machine.
-    //   weather  blank -> explicitly empty, meaning "no weather". The form says so.
-    if (len(v.ssid) > 0) cfgSetWifiSsid(v.ssid);
-    if (len(v.pass) > 0) cfgSetWifiPass(v.pass);
-    if (len(v.ssid) > 0 || len(v.pass) > 0) cfgSaveWifi();
+    // A field is stored only when it DIFFERS from what the form was showing. Blankness
+    // cannot decide this: the form pre-fills, so a WiFi-only submit arrives carrying the
+    // Server's current value — which on a never-provisioned Board is the Factory default,
+    // and storing that would pin it as a deliberate choice.
+    const bool ssidChanged    = strcmp(nz(sub.ssid),    nz(orig.ssid))    != 0;
+    const bool hostChanged    = strcmp(nz(sub.host),    nz(orig.host))    != 0;
+    const bool ipChanged      = strcmp(nz(sub.ip),      nz(orig.ip))      != 0;
+    const bool weatherChanged = strcmp(nz(sub.weather), nz(orig.weather)) != 0;
 
-    if (len(v.host) > 0) cfgSetServerHost(v.host);
-    cfgSetServerIp(v.ip);                 // always, so a blank really does clear it
-    cfgSaveServer();
+    // The passphrase cannot be compared — it is never pre-filled — so a non-blank one is
+    // always a change. A blank one keeps the stored password: storing an empty passphrase
+    // would leave the Board unable to join any secured network.
+    const bool passGiven = len(sub.pass) > 0;
 
-    cfgSetWeatherLocation(v.weather);     // always, same reasoning as the IP
-    cfgSaveWeather();
+    // A CHANGE to the SSID or hostname cannot be a clearing: a Board with no SSID can
+    // never connect, and a Board with no Server address has nothing to poll. Emptying
+    // either is never a sensible instruction, so an emptied required field is ignored
+    // rather than obeyed. Named rather than inlined because `a && b || c` is exactly the
+    // precedence the firmware's -Werror refuses to guess at.
+    const bool ssidGiven = ssidChanged && len(sub.ssid) > 0;
+    const bool hostGiven = hostChanged && len(sub.host) > 0;
+
+    if (ssidGiven) cfgSetWifiSsid(sub.ssid);
+    if (passGiven) cfgSetWifiPass(sub.pass);
+    if (ssidGiven || passGiven) cfgSaveWifi();
+
+    if (hostGiven) cfgSetServerHost(sub.host);
+    // The IP is the one field where blanking IS a real instruction: the AC requires that
+    // blanking it mean "no static fallback", not a fallback to the Factory default, which
+    // would silently point the Board at the wrong machine. An operator who clears a
+    // pre-filled address gets CFG_IP_EMPTY, not the default.
+    if (ipChanged) cfgSetServerIp(sub.ip);
+    if (hostGiven || ipChanged) cfgSaveServer();
+
+    if (weatherChanged) cfgSetWeatherLocation(sub.weather);
+    if (weatherChanged) cfgSaveWeather();
 
     return true;
 }

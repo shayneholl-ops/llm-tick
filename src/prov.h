@@ -33,7 +33,7 @@ extern "C" {
 // allowing four was never needed.
 #define PROV_AP_MAX_STA 1
 
-// Bring up the Setup AP and start serving the placeholder page. Idempotent.
+// Bring up the Setup AP and start serving the provisioning page. Idempotent.
 // Returns true if the AP came up.
 bool provStart(void);
 

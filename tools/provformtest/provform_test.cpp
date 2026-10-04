@@ -20,11 +20,6 @@
 #include <string>
 
 #include "config.h"
-
-extern "C" {
-#include "config.h"
-}
-
 #include "provform.h"
 
 static int g_fail = 0;
@@ -135,24 +130,29 @@ static void test_rejects_over_long_field() {
     check(!ok2 && err2 == PROV_FORM_ERR_SERVER_HOST, "an over-long hostname is refused too");
 }
 
+// Each test below states the form's PRE-FILL as the "originally shown" snapshot and the
+// operator's EDIT as the submission, because that pair is the whole contract: a field
+// identical in both was not changed and must not be stored.
+
 // ── cycle 5: per-field fallback survives a submit ─────────────────────────────
 static void test_only_submitted_fields_change() {
     printf("\n[cycle 5] submitting one group leaves the others alone\n");
     resetConfig();
 
     cfgSetServerHost("nas.local");
+    cfgSetWeatherLocation("Vancouver");
     cfgSaveServer();
+    cfgSaveWeather();
 
-    // What the form ACTUALLY sends when the operator edits only WiFi: the passphrase is
-    // blank (it is never pre-filled), and every other field comes back at its current
-    // value because the form pre-fills them. Writing those back is idempotent, so the
-    // Server is untouched in effect — that, not a group flag, is what per-field fallback
-    // rests on.
-    check(provApply(v("kitchen-ap", "secret123", "nas.local", "", ""), nullptr),
+    // The form displayed this...
+    prov_form_values_t shown = v("factory-ssid", "", "nas.local", "", "Vancouver");
+    // …and the operator changed only the SSID and password.
+    check(provApply(v("kitchen-ap", "secret123", "nas.local", "", "Vancouver"), shown),
           "a WiFi-only submit is accepted");
 
     checkStr(cfgWifiSsid(), "kitchen-ap", "WiFi SSID changed to what was submitted");
     checkStr(cfgServerHost(), "nas.local", "Server hostname was left untouched");
+    checkStr(cfgWeatherLocation(), "Vancouver", "weather location was left untouched");
     check(cfgServerHostIsStored(),
           "the hostname is still STORED, not reset to its Factory default");
 }
@@ -165,7 +165,7 @@ static void test_blank_passphrase_keeps_the_stored_one() {
     cfgSaveWifi();
 
     // The operator changes the SSID and leaves the passphrase box alone.
-    check(provApply(v("new-ap", "", "nas.local", "", ""), nullptr),
+    check(provApply(v("new-ap", "", "nas.local", "", ""), v("old-ap", "", "nas.local", "", "")),
           "a submit with a blank passphrase is accepted");
     checkStr(cfgWifiPass(), "the-original-secret",
              "the stored passphrase survives — an empty one would lock the Board out");
@@ -176,11 +176,17 @@ static void test_blank_server_ip_means_no_fallback() {
     printf("\n[cycle 6] blanking the Server IP means 'no static fallback'\n");
     resetConfig();
 
-    // Unset: the Factory default IP applies.
+    // Unset: the Factory default IP applies, and the form DISPLAYS that default.
     check(cfgServerIpState() == CFG_IP_UNSET, "a fresh field is UNSET");
     check(cfgServerIpIsSet(), "so the Factory default applies");
 
-    check(provApply(v("ap", "pass", "nas.local", "", ""), nullptr),
+    unsigned char o[4];
+    cfgServerIpOctets(o);
+    char shown[20];
+    snprintf(shown, sizeof(shown), "%u.%u.%u.%u", o[0], o[1], o[2], o[3]);
+
+    // The operator clears the box that was showing the Factory default.
+    check(provApply(v("ap", "pass", "nas.local", "", ""), v("ap", "pass", "nas.local", shown, "")),
           "a submit with a blank IP is accepted");
 
     check(cfgServerIpState() == CFG_IP_EMPTY, "blanking the field makes it explicitly EMPTY");
@@ -195,7 +201,8 @@ static void test_blank_weather_means_no_weather() {
     cfgSaveWeather();
     checkStr(cfgWeatherLocation(), "Vancouver", "a location is in effect to begin with");
 
-    check(provApply(v("ap", "pass", "nas.local", "", ""), nullptr),
+    // The form was showing "Vancouver"; the operator clears it.
+    check(provApply(v("ap", "pass", "nas.local", "", ""), v("ap", "pass", "nas.local", "", "Vancouver")),
           "a submit with a blank weather location is accepted");
     checkStr(cfgWeatherLocation(), "", "and the location is now explicitly empty");
 }
@@ -212,11 +219,50 @@ static void test_rejected_submit_stores_nothing() {
     bool ok = provValidate(v("new-ap", "pw", "nas.local", "999.1.1.1", "Vancouver"), &err);
     check(!ok, "the submit is refused for the bad Server IP");
 
-    check(!provApply(v("new-ap", "pw", "nas.local", "999.1.1.1", "Vancouver"), nullptr),
+    check(!provApply(v("new-ap", "pw", "nas.local", "999.1.1.1", "Vancouver"),
+                     v("old-ap", "", "nas.local", "", "")),
           "and applying the same values is also refused");
 
     checkStr(cfgWifiSsid(), "original-ap",
              "the SSID is UNCHANGED — a refused submit stores nothing");
+}
+
+// ── cycle 8: a save must survive a REBOOT without pinning Factory defaults ────
+//
+// This is the cycle that catches the cfgSaveServer() bug, and it is the reason the form
+// carries hidden "originally shown" fields at all. The failure is invisible in RAM and
+// only appears at the next boot, because setup() calls cfgLoad(): RAM keeps saying
+// "UNSET" while the store quietly holds the Factory default, so a later secrets.h edit is
+// then ignored. A suite that never calls cfgLoad() cannot see it at all.
+//
+// The submit below is the REAL one — a fresh Board whose form is displaying Factory
+// defaults, with the operator changing only WiFi. Every other field comes back exactly as
+// shown, which is precisely what used to get them pinned.
+static void test_save_does_not_pin_factory_defaults_across_a_reboot() {
+    printf("\n[cycle 8] a WiFi-only save must not pin the Server's Factory default\n");
+    resetConfig();
+
+    // A Board that has never had a Server hostname or weather location stored.
+    check(!cfgServerHostIsStored(), "the hostname starts UNSET");
+    check(!cfgWeatherIsStored(), "and so does the weather location");
+
+    // The form displayed the Factory values for every field it had no stored value for.
+    prov_form_values_t shown = provFormCurrentValues();
+
+    // The operator changes only the WiFi name.
+    check(provApply(v("kitchen-ap", "secret123", shown.host, shown.ip, shown.weather), shown),
+          "a WiFi-only submit is accepted");
+
+    // …and now the part that actually matters: reboot the Board.
+    cfgReset();
+    cfgLoad();
+
+    check(!cfgServerHostIsStored(),
+          "after a reboot the hostname is STILL unset — the submit did not pin the "
+          "Factory default into the store");
+    check(!cfgWeatherIsStored(),
+          "and the weather location is still unset too");
+    checkStr(cfgWifiSsid(), "kitchen-ap", "while the SSID really did persist");
 }
 
 int main() {
@@ -231,6 +277,7 @@ int main() {
     test_blank_server_ip_means_no_fallback();
     test_blank_weather_means_no_weather();
     test_rejected_submit_stores_nothing();
+    test_save_does_not_pin_factory_defaults_across_a_reboot();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
