@@ -54,11 +54,46 @@ Provisioning gate). Two reasons:
    on the phone. It is disabled *before* the mode switch.
 
 **Consequence:** a Board in Provisioning has no STA link, so the credential check that
-ticket #4's verify-then-reboot needs cannot use the live link. #4 must switch to
-AP+STA for that one phase, and this ADR is the place to record whether that reintroduces
-the channel problem. It does not weaken the decision: the reason AP+STA was attractive
-was to keep a link during an outage, and the outage case is now displayed rather than
-reconfigured — the second and third bullets of the Context section still carry it.
+ticket #4's verify-then-reboot needs cannot use the live link. Amendment 3 settles how.
+
+## Amendment 3 (2026-10-03): the verify phase runs AP+STA, unpinned
+
+**Partially reverses Amendment 1**, and settles the question Amendment 1 left open.
+
+For the **verify phase only** — the bounded window where the Board tests a submitted
+set of credentials before rebooting — the Board runs **AP+STA**, and the Setup AP
+**follows the station's channel instead of its pinned one**.
+
+The tension being resolved: Amendment 1 pinned the AP to channel 1 because in this
+environment clients saw the beacon and then could not associate on an overlapping
+channel. But the verify phase is the one moment that pin cannot be honoured, because
+one radio cannot be on two channels at once and AP+STA binds the AP to the station's.
+
+**Why unpinned is acceptable precisely here, and not elsewhere:**
+
+- The pin exists to make the phone able to **join**. That work is already done by the
+  time verify runs — the operator submitted the form, which means they are connected.
+- A mid-session channel change does not evict a client: the SSID, BSSID and passphrase
+  are unchanged, so the already-associated phone reassociates transparently and its
+  browser session survives. The failure mode we are avoiding is a failure at *join* time,
+  not mid-session.
+- So the pin has **no remaining job** during verify, and dropping it buys the thing
+  #4 actually requires: a failed attempt leaves the page reachable.
+
+**Also settled here:**
+
+- **Budget: 20 s**, reusing `wifiInit()`'s existing `40 x delay(500)` patience. One
+  answer to "how patient is this Board with a network", in one place, proven on hardware.
+- **Auto-reconnect stays OFF through the verify phase.** This is the trap: leaving it on
+  makes the driver retry, and each retry re-initialises WiFi and tears down the AP —
+  reproducing the exact "connected, then dropped after a few seconds" symptom that
+  Amendment 1 identifies. The verify attempt is driven explicitly, with a deadline, so
+  there is nothing for the reconnect logic to interfere with.
+- **On failure the page stays up and the entered values stay in the form**, and the
+  reason is shown on **both** the page and the Panel. Neither surface is redundant: the
+  operator is holding the phone, but the Panel is what anyone else in the room can see.
+- **On exit from Provisioning in any direction**, channel 1 is restored and the AP is
+  torn down — the unpinned state never outlives the phase.
 
 ## Amendment 2 (2026-10-03): a fourth entry path exists
 

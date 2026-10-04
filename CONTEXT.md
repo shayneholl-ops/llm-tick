@@ -62,6 +62,22 @@ actually authenticated to the new network. The Setup AP stays up until then, so 
 failed attempt leaves the page reachable.
 _Avoid_: save and restart
 
+**Verify phase**:
+The bounded window at the end of Provisioning where the Board holds the Setup AP **and**
+a station link together to test a submitted set of credentials, before rebooting. It
+lasts up to 20 s — the same budget `wifiInit()` gives a connection — and it is the only
+moment the Board runs both roles at once.
+_Avoid_: testing, connecting, handshake
+
+**Verify phase is unpinned**:
+During the verify phase the Setup AP follows the **station's** channel rather than its
+own pinned one, because a single radio cannot hold two channels and the AP cannot be
+moved off its station's channel while AP and station share it. The channel is an
+*access* concern — it decides whether a client can join at all — and by the verify phase
+the operator's phone has already joined, so the pin has no remaining job. Every other
+moment in Provisioning is still pinned to channel 1.
+_Avoid_: unpinned AP, roaming, channel fallback
+
 **Factory default**:
 The values in `secrets.h`. They are what a Board with no provisioned values uses, and
 they are never the source of truth once Provisioning has run.
