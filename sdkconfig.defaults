@@ -54,6 +54,19 @@ CONFIG_ESP32_WIFI_AMPDU_TX_ENABLED=n
 # millis()/delay()/micros() timing assumes this tick rate.
 CONFIG_FREERTOS_HZ=1000
 
+# ── Main-task stack ───────────────────────────────────────────────────────────
+# Left at IDF's 3584 default, and this was nearly a wrong turn: the Provisioning
+# reboot loop (LoadProhibited in drawCodewords, see prov.cpp::encodeQr) LOOKED like a
+# stack overflow — ricmoo/QRCode does put variable-length arrays on the stack. Raising
+# this to 16384 reproduced the fault BYTE-IDENTICALLY (same PC, same A1), which is what
+# proved it was a corrupted pointer instead. The fix belongs in encodeQr.
+#
+# It is recorded here because "esp32-arduino runs setup()/loop() on IDF's main task, so
+# CONFIG_ARDUINO_LOOP_STACK_SIZE does not govern the boot path" is a real and non-obvious
+# fact about this build. If a future change puts something genuinely stack-hungry in the
+# boot path, this is the knob — not the Arduino one.
+# CONFIG_MAIN_TASK_STACK_SIZE=16384
+
 # ── Arduino-as-component wiring ─────────────────────────────────────────────────
 # THE ONE THAT MATTERS: this option defaults to "n", and arduino-esp32's own
 # cores/esp32/main.cpp wraps ITS app_main() in `#if CONFIG_AUTOSTART_ARDUINO`

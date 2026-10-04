@@ -57,23 +57,62 @@ static void provLedOn()  { showLed(kProvLedSentinel); }   // see showLed()
 // iOS and Android commonly surface that as "incorrect password" even though the
 // passphrase is correct. That is exactly the symptom this fixes. (Verified on the
 // glass 2026-10-02: the phone read the QR fine but would not join.)
+//
+// WHY THE VERSION IS CHOSEN UP FRONT, NOT TRIED (2026-10-03)
+// This used to loop versions 1..4 and take the first that returned 0. That is a trap.
+// qrcode_initBytes() assigns qrcode->modules and builds a BitBucket over the caller's
+// buffer BEFORE it discovers the payload does not fit, and it signals that with an
+// early `return -1`. So a rejected attempt leaves `g_qr` and `g_qrBuf` holding a
+// half-built state, and simply trying the next version on top of it is undefined
+// behaviour. It was, in practice, an immediate reboot loop on this Board:
+//   Guru Meditation: Core 1 panic'ed (LoadProhibited), EXCVADDR 0x00000000
+//   drawCodewords <- qrcode_initBytes <- qrcode_initText <- encodeQr
+// because versions 1 and 2 CANNOT hold this payload (their ECC_LOW byte-mode
+// capacities are 17 and 32 bytes) and so both fail before version 3, which does fit.
+// LoadProhibited at address 0 is a corrupted pointer, NOT a stack overflow — it
+// survived raising CONFIG_MAIN_TASK_STACK_SIZE to 16384 with a byte-identical fault
+// (same PC, same A1), which is how it was distinguished from one.
+//
+// The fix is to ask the capacity question directly and call the encoder ONCE. Byte-mode
+// capacity at ECC_LOW, from the library's own tables:
+//   v1 17   v2 32   v3 53   v4 78   bytes
+// The payload is fixed at compile time (PROV_AP_SSID/PASS are macros), so the version
+// is a compile-time fact too — computed here, not discovered at runtime.
+static const uint8_t kEccLowByteCapacity[5] = { 0, 17, 32, 53, 78 };   // index = version
+
 static bool encodeQr() {
     snprintf(g_qrPayload, sizeof(g_qrPayload), "WIFI:T:WPA2;S:%s;P:%s;;",
              PROV_AP_SSID, PROV_AP_PASS);
 
-    for (uint8_t ver = 1; ver <= 4; ver++) {
-        uint16_t need = qrcode_getBufferSize(ver);
-        if (need > sizeof(g_qrBuf)) break;
-        if (qrcode_initText(&g_qr, g_qrBuf, ver, ECC_LOW, g_qrPayload) == 0) {
-            g_qrSize = g_qr.size;
-            Serial.printf("[prov] QR ok: version %u, %dx%d modules, %u B payload\n",
-                          ver, g_qr.size, g_qr.size, (unsigned)strlen(g_qrPayload));
-            return true;
-        }
+    const size_t need = strlen(g_qrPayload);
+    uint8_t ver = 0;
+    for (uint8_t v = 1; v <= 4; v++) {
+        if (need <= kEccLowByteCapacity[v]) { ver = v; break; }
     }
-    g_qrSize = 0;
-    Serial.println("[prov] QR ENCODE FAILED - the screen will show text only");
-    return false;
+    if (ver == 0) {
+        g_qrSize = 0;
+        Serial.printf("[prov] QR payload is %u B — too big for any supported version\n",
+                      (unsigned)need);
+        return false;
+    }
+    if (qrcode_getBufferSize(ver) > sizeof(g_qrBuf)) {
+        g_qrSize = 0;
+        Serial.println("[prov] QR buffer too small for the chosen version");
+        return false;
+    }
+
+    // Exactly one encoder call. A 0 here is the only success signal the library gives.
+    if (qrcode_initText(&g_qr, g_qrBuf, ver, ECC_LOW, g_qrPayload) != 0) {
+        g_qrSize = 0;
+        Serial.printf("[prov] QR ENCODE FAILED at version %u (%u B payload)\n",
+                      ver, (unsigned)need);
+        return false;
+    }
+
+    g_qrSize = g_qr.size;
+    Serial.printf("[prov] QR ok: version %u, %dx%d modules, %u B payload\n",
+                  ver, g_qr.size, g_qr.size, (unsigned)need);
+    return true;
 }
 
 // ── radio side ───────────────────────────────────────────────────────────────
