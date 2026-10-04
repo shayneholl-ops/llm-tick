@@ -10,6 +10,7 @@
 #include "tick.h"
 #include "config.h"
 
+#include "provform.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -115,32 +116,58 @@ static bool encodeQr() {
     return true;
 }
 
-// ── radio side ───────────────────────────────────────────────────────────────
-// Placeholder page. Ticket #4 replaces this with the real form; here it exists so the
-// AP can be proven reachable, which is what this ticket's acceptance criterion needs.
-static const char kPlaceholderPage[] PROGMEM = R"HTML(<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llm-tick provisioning</title>
-<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:32rem}
-code{background:#eee;padding:.15rem .35rem;border-radius:.25rem}</style></head>
-<body><h1>llm-tick provisioning</h1>
-<p>This is the Provisioning access point. The form is not built yet
-(that is the next ticket).</p>
-<p>The Board is reachable at <code>http://192.168.4.1/</code>.</p>
-<p>Effective configuration:</p><pre id="cfg">loading&hellip;</pre>
-<script>
-fetch('/cfg').then(r=>r.json()).then(d=>{
-  document.getElementById('cfg').textContent =
-    'wifi ssid : '+d.ssid+'\n'+
-    'server    : '+d.server+'\n'+
-    'server ip : '+d.ip+'\n'+
-    'weather   : '+d.weather;
-}).catch(e=>{document.getElementById('cfg').textContent='(unavailable)';});
-</script></body></html>)HTML";
+// ── the form ─────────────────────────────────────────────────────────────────
+// All the form logic lives in provform.cpp, which has no Arduino includes and is
+// host-tested by tools/provformtest. This section is only the wiring: turn a request
+// into values, call the seam, render the result. Keeping it thin is what lets the rules
+// that actually matter be tested in seconds instead of a flash cycle.
+
+static void sendForm(const char* notice, bool isError) {
+    std::string page = provBuildForm(provFormCurrentValues(), notice, isError);
+    g_server->send(200, "text/html", page.c_str());
+}
 
 static void handleRoot() {
     Serial.printf("[prov] GET /        from %s\n", g_server->client().remoteIP().toString().c_str());
-    g_server->send_P(200, "text/html", kPlaceholderPage);
+    sendForm(nullptr, false);
+}
+
+// POST / — validate, store, and re-render the form.
+//
+// Deliberately does NOT connect, tear the AP down, or reboot: verify-then-reboot is the
+// next slice, and this one is the zero-radio-risk slice. The operator can confirm their
+// values persisted by reloading, which is what makes it demoable on its own.
+//
+// A refused submit re-renders with the operator's OWN values still in the boxes (passed
+// back in) rather than the stored ones, so a typo is correctable in place instead of
+// being silently discarded — the anti-lockout property the whole feature exists for.
+static void handlePost() {
+    Serial.printf("[prov] POST /       from %s\n", g_server->client().remoteIP().toString().c_str());
+
+    prov_form_values_t v;
+    v.ssid    = g_server->arg("ssid").c_str();
+    v.pass    = g_server->arg("pass").c_str();
+    v.host    = g_server->arg("host").c_str();
+    v.ip      = g_server->arg("ip").c_str();
+    v.weather = g_server->arg("weather").c_str();
+
+    prov_form_error_t err = PROV_FORM_OK;
+    if (!provApply(v, &err)) {
+        Serial.printf("[prov] submit REFUSED (error %d) — nothing stored\n", (int)err);
+        sendForm(provFormErrorText(err), true);
+        return;
+    }
+
+    // The passphrase is never logged: this line reaches a serial log that ends up in
+    // screenshots and CI output.
+    Serial.printf("[prov] submit saved: ssid='%s' host='%s' ip='%s' weather='%s'\n",
+                  v.ssid, v.host, v.ip, v.weather);
+    Serial.println("[prov] still in Provisioning — no connection attempted by design");
+
+    // Re-render from the stored config rather than echoing the submission back, so what
+    // the operator now sees is what the Board actually holds (including a blank passphrase
+    // coming back blank, which is correct).
+    sendForm(provFormErrorText(PROV_FORM_OK), false);
 }
 
 // The page reads this. Deliberately NOT the passphrase or the API key — this handler is
@@ -248,6 +275,7 @@ bool provStart() {
         g_server = new WebServer(80);
         if (g_server) {
             g_server->on("/", handleRoot);
+            g_server->on("/", HTTP_POST, handlePost);
             g_server->on("/cfg", handleCfg);
             // Captive-portal probes, answered with a redirect so the OS offers the page.
             // Apple, Android and Windows each use a different URL; without these the
