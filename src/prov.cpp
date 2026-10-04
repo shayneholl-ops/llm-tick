@@ -128,7 +128,14 @@ static void sendForm(const prov_form_values_t& v, const char* notice, bool isErr
 }
 
 static void handleRoot() {
-    Serial.printf("[prov] GET /        from %s\n", g_server->client().remoteIP().toString().c_str());
+    // The METHOD and the FULL URI are both printed, and the URI must be the real one.
+    // An earlier version logged a literal "GET /", which made a form submitted as
+    // GET /?ssid=... indistinguishable from a plain page load — so "no POST in the log"
+    // proved nothing at all, because the submit may never have been a POST.
+    Serial.printf("[prov] %s %s  from %s\n",
+                  g_server->method() == HTTP_POST ? "POST" : "GET",
+                  g_server->uri().c_str(),
+                  g_server->client().remoteIP().toString().c_str());
     sendForm(provFormCurrentValues(), nullptr, false);
 }
 
@@ -227,6 +234,16 @@ static void handlePost() {
 // escaping, rather than inherited from a page that no longer exists.
 
 static void handleNotFound() {
+    // WHY THIS LOG IS HERE, and why it is not obvious.
+    // A form POST that does not match a registered handler lands here, gets a 302 to the
+    // Provisioning page, and the browser FOLLOWS that redirect with a GET — so the symptom
+    // is "I pressed Save and it just reloaded the page", with the serial log showing a
+    // GET and no POST at all. Exactly what was observed. Without this line the mismatch
+    // is invisible, because the POST never reaches any handler to announce itself.
+    Serial.printf("[prov] NO HANDLER for %s %s -> 302 redirect\n",
+                  g_server->method() == HTTP_POST ? "POST" : "GET",
+                  g_server->uri().c_str());
+
     // Captive-portal nudge: phones probe for a known URL (Apple: /hotspot-detect.html,
     // Android: /generate_204) to decide whether a network needs a sign-in page.
     // Answering anything unknown with a 302 to the Provisioning page is what makes the
@@ -317,7 +334,23 @@ bool provStart() {
     if (!g_server) {
         g_server = new WebServer(80);
         if (g_server) {
-            g_server->on("/", handleRoot);
+            // HTTP_GET MUST BE EXPLICIT, and this is a genuine trap rather than a style
+            // preference. `WebServer::on(uri, handler)` registers with **HTTP_ANY**, not
+            // HTTP_GET, and the dispatch loop returns the FIRST handler that matches:
+            //
+            //     for (handler = _firstHandler; handler; handler = handler->next())
+            //       if (handler->canHandle(_currentMethod, _currentUri)) break;
+            //
+            // so an HTTP_ANY handler registered for "/" swallows POST / as well, and the
+            // POST handler below is never reached. That is not theoretical: it is what
+            // made "Save to the Board" appear to do nothing — the submit really did
+            // arrive, but handleRoot() handled it and re-rendered the form from the
+            // STORED values, which looks exactly like a page refresh.
+            //
+            // The captive-portal probes below are deliberately left as HTTP_ANY: phones
+            // send them as GET, and "answer this URI whatever the method" is what we
+            // want for a redirect we never inspect.
+            g_server->on("/", HTTP_GET, handleRoot);
             g_server->on("/", HTTP_POST, handlePost);
             // Captive-portal probes, answered with a redirect so the OS offers the page.
             // Apple, Android and Windows each use a different URL; without these the
