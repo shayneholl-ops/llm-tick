@@ -156,7 +156,9 @@ configuration, not a failed one: there is nothing for the verify phase to test.
   stored credentials stand as provisioned. A pre-#8 board whose SSID was later cleared
   is indistinguishable from a Factory-fresh one (neither has the flag, neither has
   credentials); it will offer Provisioning once more at its next boot, and the submit
-  there — successful or not — sets the flag and ends the loop. Bounded, self-healing,
+  there ends the loop in one of two ways: a successful verify sets the flag; a
+   failed one leaves the flag unset while the written values stand as stored
+   credentials (the gate above), so the AP is not re-offered. Bounded, self-healing,
   and the only possible behaviour for a history the Board cannot distinguish.
 
 ## Amendment 2 (2026-10-03): a fourth entry path exists

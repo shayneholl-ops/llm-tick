@@ -1,9 +1,11 @@
 # Dump the current provisioning page: notice markup + all field values.
+import os
 import re
 import urllib.request
 
 html = urllib.request.urlopen('http://192.168.4.1/', timeout=10).read().decode()
-open(r'C:\Users\hxp-n\llm-tick-repo\tools\form-after-wrong.html', 'w', encoding='utf-8').write(html)
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'form-after-wrong.html')
+open(out, 'w', encoding='utf-8').write(html)
 print('bytes:', len(html))
 print('--- lines with notice/verif/fail/error ---')
 for i, line in enumerate(html.splitlines()):

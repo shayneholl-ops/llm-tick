@@ -143,15 +143,20 @@ static void doReboot() { ESP.restart(); }
 // FAILED verify never sets it. Nothing else writes it, and FACTORY (which clears
 // this same NVS namespace) is the only thing that clears it.
 static const char* kProvDoneKey = "provdone";
-static void provSaveDone(bool on) {
+static void provSaveProvisioned(bool on) {
     Preferences p; p.begin("llmtick", false); p.putBool(kProvDoneKey, on); p.end();
 }
-static bool provIsDone() {
+static bool provIsProvisioned() {
     Preferences p; p.begin("llmtick", true);
     bool on = p.getBool(kProvDoneKey, false);
     p.end();
     return on;
 }
+
+// The one sentence the page shows while the verify phase runs (Amendment 3: the
+// outcome lands on BOTH surfaces — page and Panel). One constant, two call sites.
+static const char* kVerifyingNotice =
+    "Verifying — the Board is testing the connection. Stay connected; this page stays up.";
 
 // Begin the verify phase. The AP stays up for the phase's whole duration: a failed
 // attempt must still be able to show its reason on the page (Amendment 3). In
@@ -175,7 +180,11 @@ static void provVerifyBegin(const char* ssid) {
 }
 
 static void sendForm(const prov_form_values_t& v, const char* notice, bool isError) {
-    std::string page = provBuildForm(v, notice, isError);
+    // While the verify phase is active the page auto-refreshes, so a phone holding it
+    // sees the outcome on its own — the reason lands on the page AND the Panel
+    // without a manual reload (Amendment 3).
+    std::string page = provBuildForm(v, notice, isError,
+                                     g_verifyState != PROV_VERIFY_IDLE ? 5 : 0);
     g_server->send(200, "text/html", page.c_str());
 }
 
@@ -192,7 +201,7 @@ static void handleRoot() {
     // the outcome lands on BOTH surfaces — page and Panel).
     if (g_verifyState == PROV_VERIFY_RUNNING) {
         sendForm(provFormCurrentValues(),
-                 "Verifying — the Board is testing the connection. Stay connected; this page stays up.",
+                 kVerifyingNotice,
                  false);
     } else if (g_verifyState == PROV_VERIFY_FAILED) {
         static char failNotice[80];
@@ -289,7 +298,7 @@ static void handlePost() {
         // network" must not resurrect the Setup AP on the next boot, so the flag is
         // set here rather than only after a successful verify (Amendment 5).
         Serial.println("[prov] no network configured — nothing to verify; configuration complete");
-        provSaveDone(true);
+        provSaveProvisioned(true);
         provLeave();
         doReboot();
         return;
@@ -299,7 +308,7 @@ static void handlePost() {
     // The page reports the phase while it runs; the form stays pre-filled from the
     // saved config, so a failure is corrected and resubmitted in place.
     sendForm(provFormCurrentValues(),
-             "Verifying — the Board is testing the connection. Stay connected; this page stays up.",
+             kVerifyingNotice,
              false);
 }
 
@@ -523,7 +532,7 @@ void provTick() {
                 // THE writer of the Provisioned flag. This is the invariant that makes
                 // write-first safe (Amendment 4): the Board leaves Provisioning for
                 // good only when the credentials have proven to work.
-                provSaveDone(true);
+                provSaveProvisioned(true);
                 Serial.printf("[prov] verify OK — associated with '%s' in %lu s; marking Provisioned\n",
                               g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
                 provLeave();   // AP down, station properties restored
@@ -588,7 +597,7 @@ void provEnterIfNeverProvisioned() {
     // SSID was later deliberately cleared, which is "no network" and must NOT
     // resurrect the Setup AP. (cfgWifiIsStored() alone cannot tell that case from a
     // Factory-fresh Board; the flag is what can.)
-    if (provIsDone()) return;
+    if (provIsProvisioned()) return;
     // Legacy: a Board written over serial (SETWIFI) before the verify phase existed
     // has stored credentials and no flag. Stored credentials stand as provisioned.
     if (cfgWifiIsStored()) return;
@@ -611,8 +620,11 @@ void provLeave() {
     if (!g_active) { Serial.println("[prov] not in Provisioning"); return; }
     if (g_verifyState == PROV_VERIFY_RUNNING) {
         // A PROV stop mid-verify cancels the attempt. The written values stay SAVED
-        // (write-first); the flag is NOT set, so a Board that never completed a
-        // successful verify still offers Provisioning at its next boot.
+        // (write-first, Amd 5) and the flag stays unset — but at the next boot the
+        // stored credentials stand: the legacy cfgWifiIsStored() gate re-enters
+        // normal operation, so the AP is NOT re-offered and the Board retries the
+        // unverified credentials with backoff. Recovery: serial PROV (re-enter
+        // Provisioning) or FACTORY (wipe, re-provision from scratch).
         WiFi.disconnect(false, false);
         g_verifyState = PROV_VERIFY_IDLE;
         g_verifyFail = PROV_VERIFY_FAIL_NONE;
@@ -660,7 +672,7 @@ void provPrintStatus() {
                       g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
     else if (g_verifyState == PROV_VERIFY_FAILED)
         Serial.printf("[prov] last verify FAILED (%s); values kept\n", provVerifyReasonText(g_verifyFail));
-    Serial.printf("[prov] provisioned flag: %s\n", provIsDone() ? "set" : "unset");
+    Serial.printf("[prov] provisioned flag: %s\n", provIsProvisioned() ? "set" : "unset");
 }
 
 // ── Panel screen ─────────────────────────────────────────────────────────────

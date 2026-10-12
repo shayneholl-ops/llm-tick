@@ -86,9 +86,13 @@ prov_form_values_t provFormCurrentValues();
 // with a placeholder explaining that a blank means "leave the current one alone". So
 // there is no path by which the value reaches the page source, and no exception to get
 // wrong later.
+// refreshSecs > 0 adds a <meta http-equiv="refresh"> so a phone holding the page
+// re-requests it and sees a changed verify outcome without a manual reload; 0 (the
+// default, and every existing call site) renders exactly the same page as before.
 std::string provBuildForm(const prov_form_values_t& v,
                           const char* notice = nullptr,
-                          bool isError = false);
+                          bool isError = false,
+                          int refreshSecs = 0);
 
 // Check a submit WITHOUT storing anything. Returns true when acceptable; on false,
 // *err says which field was at fault.

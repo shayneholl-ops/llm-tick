@@ -112,12 +112,15 @@ prov_form_values_t provFormCurrentValues() {
 }
 
 std::string provBuildForm(const prov_form_values_t& v,
-                          const char* notice, bool isError) {
+                          const char* notice, bool isError,
+                          int refreshSecs) {
     std::string p;
     p.reserve(2048);
 
+    p += "<!doctype html><html><head><meta charset=\"utf-8\">";
+    if (refreshSecs > 0)
+        p += "<meta http-equiv=\"refresh\" content=\"" + std::to_string(refreshSecs) + "\">";
     p +=
-        "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         "<title>llm-tick provisioning</title><style>"
         "body{font-family:system-ui,-apple-system,sans-serif;margin:1rem;line-height:1.4;"
