@@ -1,8 +1,9 @@
 // prov.cpp — the Provisioning state. See prov.h for the rules it implements.
 //
-// Two halves:
+// Three halves:
 //   1. the Setup AP + the provisioning web page (radio side)
-//   2. the Panel screen: a QR on a flat background (drawing side)
+//   2. the verify phase: AP+STA for up to 20 s, then reboot or stay (ticket #8)
+//   3. the Panel screen: a QR on a flat background (drawing side)
 //
 // The QR matrix is built ONCE, when Provisioning is entered, and cached — rendering it
 // per frame would re-run the encoder 79 times a second for a static image.
@@ -11,6 +12,7 @@
 #include "config.h"
 
 #include "provform.h"
+#include "provverify.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -122,6 +124,56 @@ static bool encodeQr() {
 // into values, call the seam, render the result. Keeping it thin is what lets the rules
 // that actually matter be tested in seconds instead of a flash cycle.
 
+// ── verify phase (ticket #8) ─────────────────────────────────────────────────
+// After a successful submit the Board tests the stored credentials before it
+// leaves Provisioning (ADR-0001 Amendment 4: write first, verify second). The
+// DECISION lives in provverify.cpp (host-tested); here is the wiring that touches
+// the radio: AP+STA for the phase's duration, AP-only again afterwards, reboot on
+// success.
+static prov_verify_state_t g_verifyState = PROV_VERIFY_IDLE;
+static uint32_t g_verifyStart = 0;
+static prov_verify_fail_t g_verifyFail = PROV_VERIFY_FAIL_NONE;
+static char g_verifySsid[33] = "";   // the SSID under test, for logs; the passphrase is never logged
+
+static void doReboot() { ESP.restart(); }
+
+// The Provisioned flag — the single safety invariant of write-first (ADR-0001
+// Amendment 4). Set ONLY when the Board's configuration is confirmed complete: a
+// successful verify, or a deliberate submit that left no network to verify. A
+// FAILED verify never sets it. Nothing else writes it, and FACTORY (which clears
+// this same NVS namespace) is the only thing that clears it.
+static const char* kProvDoneKey = "provdone";
+static void provSaveDone(bool on) {
+    Preferences p; p.begin("llmtick", false); p.putBool(kProvDoneKey, on); p.end();
+}
+static bool provIsDone() {
+    Preferences p; p.begin("llmtick", true);
+    bool on = p.getBool(kProvDoneKey, false);
+    p.end();
+    return on;
+}
+
+// Begin the verify phase. The AP stays up for the phase's whole duration: a failed
+// attempt must still be able to show its reason on the page (Amendment 3). In
+// AP+STA the AP is forced onto the station's channel, so the pinned channel 1 is
+// suspended for the phase — which is fine, because the operator's phone is
+// ALREADY connected, and the pin's job is to let a phone JOIN, not to hold a
+// session (Amendment 3).
+static void provVerifyBegin(const char* ssid) {
+    WiFi.setAutoReconnect(false);   // the trap: retries re-init the driver and tear the AP down
+    WiFi.disconnect(false, false);  // clear any idle STA state before the mode switch
+    WiFi.mode(WIFI_AP_STA);
+    snprintf(g_verifySsid, sizeof(g_verifySsid), "%s", ssid);
+    const char* pass = cfgWifiPass();
+    if (pass && *pass) WiFi.begin(ssid, pass);
+    else               WiFi.begin(ssid);
+    g_verifyFail = PROV_VERIFY_FAIL_NONE;
+    g_verifyStart = millis();
+    g_verifyState = PROV_VERIFY_RUNNING;
+    Serial.printf("[prov] verify: testing ssid='%s' (budget %u s; the AP stays up)\n",
+                  ssid, (unsigned)(PROV_VERIFY_BUDGET_MS / 1000));
+}
+
 static void sendForm(const prov_form_values_t& v, const char* notice, bool isError) {
     std::string page = provBuildForm(v, notice, isError);
     g_server->send(200, "text/html", page.c_str());
@@ -136,7 +188,21 @@ static void handleRoot() {
                   g_server->method() == HTTP_POST ? "POST" : "GET",
                   g_server->uri().c_str(),
                   g_server->client().remoteIP().toString().c_str());
-    sendForm(provFormCurrentValues(), nullptr, false);
+    // While the verify phase runs the page carries the phase's status (Amendment 3:
+    // the outcome lands on BOTH surfaces — page and Panel).
+    if (g_verifyState == PROV_VERIFY_RUNNING) {
+        sendForm(provFormCurrentValues(),
+                 "Verifying — the Board is testing the connection. Stay connected; this page stays up.",
+                 false);
+    } else if (g_verifyState == PROV_VERIFY_FAILED) {
+        static char failNotice[80];
+        snprintf(failNotice, sizeof(failNotice),
+                 "Connection failed (%s) — correct the form and Save again.",
+                 provVerifyReasonText(g_verifyFail));
+        sendForm(provFormCurrentValues(), failNotice, true);
+    } else {
+        sendForm(provFormCurrentValues(), nullptr, false);
+    }
 }
 
 // Copy a request argument into caller-owned storage.
@@ -213,12 +279,28 @@ static void handlePost() {
     // screenshots and CI output.
     Serial.printf("[prov] submit saved: ssid='%s' host='%s' ip='%s' weather='%s'\n",
                   v.ssid, v.host, v.ip, v.weather);
-    Serial.println("[prov] still in Provisioning — no connection attempted by design");
 
-    // Re-render from the stored config rather than echoing the submission back, so what
-    // the operator now sees is what the Board actually holds (including a blank passphrase
-    // coming back blank, which is correct).
-    sendForm(provFormCurrentValues(), provFormErrorText(PROV_FORM_OK), false);
+    // Now verify what was just written (Amendment 4: write first, verify second) —
+    // testing the STORED credentials, i.e. exactly what the next boot will use.
+    const char* ssid = cfgWifiSsid();
+    if (!*ssid) {
+        // A submit that leaves no network is a complete configuration: there is
+        // nothing to connect to, so there is nothing to verify. A deliberate "no
+        // network" must not resurrect the Setup AP on the next boot, so the flag is
+        // set here rather than only after a successful verify (Amendment 5).
+        Serial.println("[prov] no network configured — nothing to verify; configuration complete");
+        provSaveDone(true);
+        provLeave();
+        doReboot();
+        return;
+    }
+    provVerifyBegin(ssid);
+
+    // The page reports the phase while it runs; the form stays pre-filled from the
+    // saved config, so a failure is corrected and resubmitted in place.
+    sendForm(provFormCurrentValues(),
+             "Verifying — the Board is testing the connection. Stay connected; this page stays up.",
+             false);
 }
 
 // NOTE: the old GET /cfg JSON endpoint is GONE, deliberately.
@@ -428,6 +510,40 @@ void provTick() {
                           (unsigned)(hw * sizeof(StackType_t)));
         }
     }
+
+    // The verify phase's state machine (ticket #8). provverify.cpp is host-tested;
+    // this is where it meets the real clock and the real WiFi.status().
+    if (g_verifyState == PROV_VERIFY_RUNNING) {
+        prov_verify_fail_t fail = PROV_VERIFY_FAIL_NONE;
+        prov_verify_state_t next = provVerifyPoll(g_verifyState, g_verifyStart, millis(),
+                                                 PROV_VERIFY_BUDGET_MS, (int)WiFi.status(), &fail);
+        if (next != PROV_VERIFY_RUNNING) {
+            g_verifyState = next;
+            if (next == PROV_VERIFY_OK) {
+                // THE writer of the Provisioned flag. This is the invariant that makes
+                // write-first safe (Amendment 4): the Board leaves Provisioning for
+                // good only when the credentials have proven to work.
+                provSaveDone(true);
+                Serial.printf("[prov] verify OK — associated with '%s' in %lu s; marking Provisioned\n",
+                              g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
+                provLeave();   // AP down, station properties restored
+                Serial.println("[prov] rebooting onto the verified network");
+                Serial.flush();
+                doReboot();
+                return;
+            }
+            g_verifyFail = fail;
+            // Back to AP-ONLY, and the AP re-pinned to channel 1: AP+STA had been
+            // forcing the AP onto the station's channel, and the unpinned state must
+            // never outlive the phase (Amendment 3). The phone, already associated,
+            // follows the beacon — SSID, BSSID and passphrase are unchanged.
+            WiFi.disconnect(false, false);
+            WiFi.mode(WIFI_AP);
+            WiFi.softAP(PROV_AP_SSID, PROV_AP_PASS, PROV_AP_CHANNEL, 0, PROV_AP_MAX_STA);
+            Serial.printf("[prov] verify FAILED (%s) — AP-only ch%d restored; values kept, correct and Save again\n",
+                          provVerifyReasonText(fail), PROV_AP_CHANNEL);
+        }
+    }
 }
 
 // ── persistence ──────────────────────────────────────────────────────────────
@@ -465,13 +581,16 @@ void provRestoreIfSaved() {
 void provEnterIfNeverProvisioned() {
 #ifndef CFG_HOST_TEST
     if (g_active) return;   // already restoring a deliberate Provisioning
-    // "Never provisioned" == no WiFi SSID has ever been STORED. cfgWifiIsStored() is
-    // false both for a Factory-fresh Board and for one whose SSID was explicitly
-    // cleared — and an explicitly cleared SSID is a deliberate "I want no network",
-    // which must NOT resurrect the setup path. Only the first is handled here: a Board
-    // that had credentials and then had them cleared is still provisioned, and
-    // cfgWifiIsStored() alone cannot distinguish the two cases. Ticket #4's form will
-    // record a separate "provisioned" flag precisely so it can.
+    // The Provisioned flag is authoritative (ADR-0001 Amendment 4): set only by a
+    // successful verify (or a deliberate submit that left no network to verify), it
+    // is the one fact that moves a Board out of this boot behaviour. A Board that
+    // has been through Provisioning never auto-enters it again — including one whose
+    // SSID was later deliberately cleared, which is "no network" and must NOT
+    // resurrect the Setup AP. (cfgWifiIsStored() alone cannot tell that case from a
+    // Factory-fresh Board; the flag is what can.)
+    if (provIsDone()) return;
+    // Legacy: a Board written over serial (SETWIFI) before the verify phase existed
+    // has stored credentials and no flag. Stored credentials stand as provisioned.
     if (cfgWifiIsStored()) return;
 
     Serial.println("[prov] no WiFi credentials have ever been stored — offering Provisioning");
@@ -490,6 +609,15 @@ void provEnter() {
 
 void provLeave() {
     if (!g_active) { Serial.println("[prov] not in Provisioning"); return; }
+    if (g_verifyState == PROV_VERIFY_RUNNING) {
+        // A PROV stop mid-verify cancels the attempt. The written values stay SAVED
+        // (write-first); the flag is NOT set, so a Board that never completed a
+        // successful verify still offers Provisioning at its next boot.
+        WiFi.disconnect(false, false);
+        g_verifyState = PROV_VERIFY_IDLE;
+        g_verifyFail = PROV_VERIFY_FAIL_NONE;
+        Serial.println("[prov] verify cancelled (PROV stop)");
+    }
     provStop();
     provSaveFlag(false);
     showLed(g_scene);          // restore the scene's own colour
@@ -527,6 +655,12 @@ void provPrintStatus() {
     Serial.print("[prov] QR payload bytes: ");
     for (const char* p = g_qrPayload; *p; p++) Serial.printf("%02X ", (unsigned char)*p);
     Serial.println();
+    if (g_verifyState == PROV_VERIFY_RUNNING)
+        Serial.printf("[prov] verify running: ssid='%s' (%lu s elapsed)\n",
+                      g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
+    else if (g_verifyState == PROV_VERIFY_FAILED)
+        Serial.printf("[prov] last verify FAILED (%s); values kept\n", provVerifyReasonText(g_verifyFail));
+    Serial.printf("[prov] provisioned flag: %s\n", provIsDone() ? "set" : "unset");
 }
 
 // ── Panel screen ─────────────────────────────────────────────────────────────
@@ -658,5 +792,19 @@ void provRender(uint16_t* buf, int w, int h) {
     snprintf(line, sizeof(line), "OPEN  http://%s/", (ip && *ip) ? ip : "192.168.4.1");
     drawCentered(credTop + kLineStep * 2, ink, 2, line);
 
-    drawCentered(kFooterY, ink, 0, "PROV STOP  to leave");
+    // Footer: normally the exit hint. While the verify phase runs it carries the
+    // phase's status instead — the Panel is what anyone else in the room can see
+    // (Amendment 3), and the status is what they need. The credential lines above
+    // (and the QR) stay, so the AP remains joinable either way.
+    const char* footer = "PROV STOP  to leave";
+    if (g_verifyState == PROV_VERIFY_RUNNING) {
+        uint32_t leftMs = PROV_VERIFY_BUDGET_MS - provVerifyElapsed(g_verifyStart, millis());
+        if (leftMs > PROV_VERIFY_BUDGET_MS) leftMs = 0;   // clamp a late frame past the budget (wrap-safe)
+        snprintf(line, sizeof(line), "VERIFYING  %lus left", (unsigned long)(leftMs / 1000));
+        footer = line;
+    } else if (g_verifyState == PROV_VERIFY_FAILED) {
+        snprintf(line, sizeof(line), "FAILED  %s", provVerifyReasonText(g_verifyFail));
+        footer = line;
+    }
+    drawCentered(kFooterY, ink, 0, footer);
 }

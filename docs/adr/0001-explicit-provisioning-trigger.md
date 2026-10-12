@@ -134,6 +134,31 @@ Rejected: write-last. It is the more conservative ordering and it would have rem
 partial-commit class outright, but it makes the failure page correct only for the
 response that carried the values, and loses the operator's typing to a power cut.
 
+## Amendment 5 (2026-10-04): a submit that leaves no network is complete without a verify
+
+Amendment 4 sets the Provisioned flag only on a successful verify, and it does not cover
+a submit that leaves the Board with **no SSID at all**. That submit is a complete
+configuration, not a failed one: there is nothing for the verify phase to test.
+
+- **A submit that leaves no SSID stored sets the flag directly and reboots.** Waiting
+  out the 20 s budget to discover that would be waiting for a failure the operator
+  already declared. The Board reboots into its no-network behaviour — no connection
+  attempt, no Setup AP, no auto-reentry — which is exactly the deliberate "I want no
+  network" state the Decision describes. (Through the form this is reachable only on a
+  Board with no stored SSID: the form's blank-means-keep contract means a stored SSID
+  survives a blanked box, so a credentialed Board cannot clear its SSID from the page —
+  FACTORY is the only clearer of a value.)
+- **A failed verify still never sets the flag.** Amendment 4's invariant is untouched:
+  the flag's only writers are a successful verify and the no-network submit above.
+- **The never-provisioned path is now keyed on the flag.** `provEnterIfNeverProvisioned()`
+  consults the flag first, then the stored-credential check the Amendment 2 note
+  describes, which stays for boards written over serial before this flag existed: their
+  stored credentials stand as provisioned. A pre-#8 board whose SSID was later cleared
+  is indistinguishable from a Factory-fresh one (neither has the flag, neither has
+  credentials); it will offer Provisioning once more at its next boot, and the submit
+  there — successful or not — sets the flag and ends the loop. Bounded, self-healing,
+  and the only possible behaviour for a history the Board cannot distinguish.
+
 ## Amendment 2 (2026-10-03): a fourth entry path exists
 
 **Contradicts the Decision below**, which admits entry only for a never-provisioned

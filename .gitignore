@@ -33,6 +33,10 @@ tools/qrtest/*.exe
 tools/provformtest/*.exe
 tools/provverifytest/*.exe
 
+# generated provisioning-form captures + probe logs (contain the user's network details — local only)
+tools/form-*.html
+tools/*-log.txt
+
 # ESP-IDF generated sdkconfig (per-env, regenerated from sdkconfig.defaults)
 sdkconfig.*
 !sdkconfig.defaults

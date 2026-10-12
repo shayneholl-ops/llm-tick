@@ -52,9 +52,12 @@ a WiFi outage never causes one to appear.
 _Avoid_: hotspot, config AP, fallback AP
 
 **Provisioned**:
-The property of a Board that has values stored in NVS. A provisioned Board never uses
-the Factory default, even if a stored value is empty.
-_Avoid_: configured, set up
+The property of a Board whose configuration is confirmed complete, recorded in a
+dedicated flag (NVS key `provdone`). The flag is set only by a successful verify, or
+by a deliberate submit that leaves no network to verify; a failed verify never sets it.
+It is the one fact that moves a Board out of the never-provisioned boot behaviour, and
+FACTORY is the only thing that clears it.
+_Avoid_: configured, set up, has values stored
 
 **Verify-then-reboot**:
 The rule that a submitted provision is only treated as successful once the Board has

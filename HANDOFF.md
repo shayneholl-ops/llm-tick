@@ -1,4 +1,4 @@
-# llm-tick handoff (2026-09-19)
+# llm-tick handoff (2026-10-11)
 
 Portable state for picking up this project in a fresh session. Read this first, then `README.md` (Hardware truth section) and `src/board.h` comments.
 
@@ -8,7 +8,7 @@ A Waveshare **ESP32-S3-LCD-1.47B** (ST7789 172×320, 8 MB PSRAM, 16 MB flash) tu
 ## Locations
 | Thing | Path / value |
 |---|---|
-| Canonical repo (master @ `a1a089f`, pushed 2026-09-21) | `C:\Users\hxp-n\llm-tick-repo\` |
+| Canonical repo (master, pushed 2026-10-11) | `C:\Users\hxp-n\llm-tick-repo\` |
 | Debug toolkit (diag project + tools + evidence) | `C:\Users\hxp-n\llm-tick-diag\` (wxprobe, sweep, bandwatch, matrix, beat, bandmap, crashloop, Waveshare demo, capture clips, logs) |
 | Stale pre-push sandbox copy (no .git, reference only) | `C:\Users\hxp-n\llm-tick\` (contains `ref-genart\`) |
 | Sample feed data | `C:\Users\hxp-n\llm-tick-test\` |
@@ -17,7 +17,7 @@ A Waveshare **ESP32-S3-LCD-1.47B** (ST7789 172×320, 8 MB PSRAM, 16 MB flash) tu
 | Camera (the only "eye") | OctoStream RTSP `rtsp://192.168.1.86:554/stream`, 60 fps source; grab: `ffmpeg -rtsp_transport tcp - <url> -frames:v 1 -update 1 -y out.jpg`. **Service is flaky** (OctoPrint on the Pi; if 554 is refused, user restarts it on the Pi). |
 | Secrets | `src/secrets.h` (gitignored): WiFi `Coromandel`, weather key filled, server 192.168.1.69:8266. **Never echo or commit.** Pushes use `gh` credentials; if a push fails on auth, re-run `gh auth setup-git`. |
 
-## State: animated weather background (2026-09-22); cyberpunk scene removed (2026-09-22); flicker + crash fixed; **backlight white-balance (committed `d507d07`)**; usage server restored (2026-09-24 ~02:00, item 16); usage page unified onto the weather background (2026-09-24 ~03:00, item 17, `42e0396`); **BLE→USB keyboard bridge firmware live on the board (2026-09-28, item 22 — now a quiet HID keyboard, no auto-typing)**
+## State: animated weather background (2026-09-22); cyberpunk scene removed (2026-09-22); flicker + crash fixed; **backlight white-balance (committed `d507d07`)**; usage server restored (2026-09-24 ~02:00, item 16); usage page unified onto the weather background (2026-09-24 ~03:00, item 17, `42e0396`); **BLE→USB keyboard bridge firmware live on the board (2026-09-28, item 22 — now a quiet HID keyboard, no auto-typing)**; **F2 web-provisioning: form (ticket #7) + verify-then-reboot (ticket #8) SHIPPED 2026-10-11 — the Board is now Provisioned on the user's network and no longer re-offers the AP (last State item below)**
 - `0a6abb0` — three **per-unit hardware facts** (backlight GPIO48; glass centered `offset_x 34`; glass mounted **180°** → `offset_rotation 2`).
 - `4de0fbb` — weather key live; serial `PRESS` line emulates BOOT (hands-free scene testing) — the **only** scene control (RESET only reboots; BOOT is not a scene input on this build).
 - `c621bed`+`e79029a`+`d248a6e` — 2026-09-18 top-band investigation, *then* closed as optical — **now superseded** (below).
@@ -178,6 +178,7 @@ A Waveshare **ESP32-S3-LCD-1.47B** (ST7789 172×320, 8 MB PSRAM, 16 MB flash) tu
   ```
   and the server: `BIND_HOST=192.168.1.69 ALLOW_PUBLIC_BIND=1 LOG_PATH=C:\Users\hxp-n\llm-tick-usage\usage.jsonl python server.py`. Verified end-to-end with a real inference: ledger row written, `server.py` served it, board showed `tok=79` and auto-returned from standby to usage.
 - Serial commands live in the build (`PRESS` = the scene cycler / `LED 0|1` / `BL 0|25|50|100` / `BLX 0..6` / `PAT 0..8` / `WB 0..7` / `WXN` / `ST`) — harmless at runtime (BL 100 = DC, PAT 0 = normal, WB 0 = normal, WXN off = auto), kept on purpose; 200-Hz-class backlight is a 10-ms-tick 5-substep task (`blTask`), **not** delayMicroseconds (that froze the board) — do not reintroduce spins.
+- **F2 WEB PROVISIONING COMPLETED — TICKETS #7 AND #8 SHIPPED + HARDWARE-VERIFIED (2026-10-11).** The Setup-AP page is a real form: `GET /` renders the four stored fields pre-filled (the passphrase is never echoed; a blank one means "keep the stored"), and the hidden `o_*` fields carry what was shown so a Save persists only the fields the operator actually changed (`src/provform.{h,cpp}`, 42 host assertions). Submit follows **ADR-0001 amendments 3–5 (write-first, verify-then-reboot)**: the values are validated → written → verified on AP+STA (20 s budget, unpinned, the AP stays up so the phone can watch); on success the **provisioned flag** (NVS `provdone` in namespace `llmtick`, set only by a *successful* verify — a failed one never does) is saved and the Board reboots onto the verified network in STA-only mode, **never re-offering the AP** (`provEnterIfNeverProvisioned` now keys on the flag first, the legacy `cfgWifiIsStored()` gate kept for boards written before this); on failure it returns to AP-only channel 1, the page shows the reason ("Connection failed (timeout) — correct the form and Save again.") and the values are kept. A no-SSID submit sets the flag directly (amendment 5: the Board is allowed to run offline). **Both paths were proven on the unit from a real client** (`tools/prov-http-test.py`, `tools/join-prov-ap.ps1`, `tools/dump-page.py` — committed; the passphrase is read from the gitignored `secrets.h`): a wrong pass → serial `verify FAILED (timeout) — AP-only ch1 restored` + the page notice, then a corrected re-submit → `verify OK — associated … marking Provisioned` → reboot → `wifi:mode : sta` only, `WiFi UP`, running, no re-entry. The Board is **now Provisioned** on the user's real network; serial `FACTORY` is the only way back to the AP. Remaining F2: #9 (weather resolution) and #5 (stress + docs).
 
 ## Camera measurement facts (use these, not the 25/60 fps recipes, for panel light)
 - 1080×1920 RTSP regions: bandTop (330,515,230,55) = display rows ~12–37; bandMid (320,840,280,60); bandBot (340,1130,240,50); caseCtrl (100,100,400,80) = ambient control; pwrBtn (150,350,130,110).
