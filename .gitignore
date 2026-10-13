@@ -39,6 +39,13 @@ tools/provresolvetest/*.exe
 tools/form-*.html
 tools/*-log.txt
 
+# #5 stress-run artifacts: raw console, heap samples, run transcripts, and the
+# netsh WLAN profile (the profile embeds the Setup-AP passphrase)
+tools/stress-prov-*.txt
+tools/stress-prov-heap.csv
+tools/.llmtick-stress.xml
+tools/.commit-msg-*.txt
+
 # ESP-IDF generated sdkconfig (per-env, regenerated from sdkconfig.defaults)
 sdkconfig.*
 !sdkconfig.defaults
