@@ -7,6 +7,12 @@
 # CDC port cannot re-enter download mode. The ROM USB-Serial-JTAG port appears
 # only while BOOT is held at reset — exactly what this script waits for.
 #
+# UPDATE (2026-10-12): on the current ARDUINO_USB_MODE=1 build the app console
+# IS the native USB-Serial/JTAG interface, and esptool can drive the ROM's
+# built-in USB-JTAG download entry (DTR/RTS reset sequence) directly on it —
+# no BOOT press, no new port. Step 2 below therefore first probes the console
+# port; only if the ROM is not reachable does it wait for a BOOT-hold port.
+#
 # Usage:  pwsh -File tools\flash-main-firmware.ps1
 #   1. Note the ports listed under "current ports" (should be everything but
 #      the board's JTAG port).
@@ -40,21 +46,33 @@ Write-Output "[flash] current ports: $(if ($before) { $before -join ', ' } else 
 Write-Output "[flash] >>> Hold BOOT, tap RESET once, release BOOT — I am waiting for the ROM download port (up to 60 s)."
 Write-Output "[flash] (port changes appear below as they happen; the ROM JTAG port is a NEW COM that was not listed above)"
 
+# --- find a port whose ROM is reachable ---
+# Preferred: the app console port itself (native USB-Serial/JTAG) — esptool's
+# built-in USB-JTAG DTR/RTS reset lands the chip in download mode in place.
 $port = $null
-$lastSeen = @(Get-Ports)
-$deadline = (Get-Date).AddSeconds(60)
-while ((Get-Date) -lt $deadline) {
-  $now = @(Get-Ports)
-  if (($now -join ',') -ne ($lastSeen -join ',')) {
-    Write-Output "[flash] ports now: $(if ($now) { $now -join ', ' } else { '(none)' }) (was: $($lastSeen -join ', '))"
-  }
-  $lastSeen = $now
-  foreach ($p in $now) { if ($before -notcontains $p) { $port = $p; break } }
-  if ($port) { break }
-  Start-Sleep -Milliseconds 400
+foreach ($p in $before) {
+  Write-Output "[flash] probing ROM on $p ..."
+  $probe = & $esp --chip esp32s3 --port $p --baud 115200 chip_id 2>&1
+  if (($probe -join "`n") -match 'Chip is ESP32') { $port = $p; break }
+  Write-Output "[flash] $p is not a reachable ROM; trying the next port"
 }
-if (-not $port) { Write-Error "no new COM port appeared in 60 s. Re-check: BOOT must be HELD while RESET is tapped, then released. If a port flashed by but esptool missed it, just re-run; the board is still in the old firmware."; exit 2 }
-Write-Output "[flash] ROM download port found: $port"
+if (-not $port) {
+  Write-Output "[flash] >>> No reachable ROM on the existing ports. Hold BOOT, tap RESET once, release BOOT — I am waiting for the ROM download port (up to 60 s)."
+  $lastSeen = @(Get-Ports)
+  $deadline = (Get-Date).AddSeconds(60)
+  while ((Get-Date) -lt $deadline) {
+    $now = @(Get-Ports)
+    if (($now -join ',') -ne ($lastSeen -join ',')) {
+      Write-Output "[flash] ports now: $(if ($now) { $now -join ', ' } else { '(none)' }) (was: $($lastSeen -join ', '))"
+    }
+    $lastSeen = $now
+    foreach ($p in $now) { if ($before -notcontains $p) { $port = $p; break } }
+    if ($port) { break }
+    Start-Sleep -Milliseconds 400
+  }
+}
+if (-not $port) { Write-Error "no reachable ROM port (probed existing, waited 60 s for a new one). The board is still on the old firmware."; exit 2 }
+Write-Output "[flash] flashing through $port"
 
 # --- flash all four images at their huge_app.csv offsets ---
 # NOTE (2026-10-02): do NOT add --flash_mode / --flash_freq / --flash_size here. On this
