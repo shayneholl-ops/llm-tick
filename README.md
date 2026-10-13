@@ -34,10 +34,16 @@ A `PRESS` line over USB-serial cycles the scenes. The unit does have a RESET and
 
 The Board can be reconfigured **without a reflash**: send `PROV` on the serial console
 (or power a never-provisioned Board, which offers it on first boot), and it brings up a
-Setup AP and shows a **QR code on the Panel** with the AP name, passphrase and URL. Join
-it from a phone and open the page to see the effective configuration.
+Setup AP and shows a **QR code on the Panel** with the AP name, passphrase and URL.
+Join it from a phone and open the page to **edit the configuration and submit it**.
 
 - SSID `llm-tick-prov`, WPA2, on channel 1.
+- The page carries a real form — WiFi SSID/passphrase, server host/IP/port, and a
+  weather location. Submitting **verifies before it commits**: the Board joins the
+  network you typed, resolves the weather location against the API (see
+  [ADR-0001](docs/adr/0001-explicit-provisioning-trigger.md) amendment 6), and only
+  then reboots onto it. A failed verify leaves the Setup AP up with your values still
+  in the form, so you can correct and submit again.
 - While Provisioning runs, the usage/weather poll is **suspended** — the radio serves
   the phone only. This is a deliberate concession to a documented WiFi-driver
   heap-corruption crash under bursty RX load.
@@ -48,7 +54,13 @@ it from a phone and open the page to see the effective configuration.
   never enters Provisioning — that is [ADR-0001](docs/adr/0001-explicit-provisioning-trigger.md),
   so a router reboot cannot turn an unattended Board into a hotspot.
 
-The editable form itself is ticket #4; today the page reports the current values.
+Configuration is read once at boot, so a submitted change takes effect on the **next
+boot** — not live. `SETWIFI` / `SETSERVER` / `SETLOC` / `CFG` / `FACTORY` are the
+serial equivalents; see `HANDOFF.md` item 154.
+
+Repeated Provisioning cycles are stress-checked: 10 enter/use/exit cycles with a
+client associating each time, no crash, and free heap bit-identical at `292752` on
+every boot (ticket #5).
 
 ## Merged from three open-source projects
 
