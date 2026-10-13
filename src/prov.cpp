@@ -2,7 +2,9 @@
 //
 // Three halves:
 //   1. the Setup AP + the provisioning web page (radio side)
-//   2. the verify phase: AP+STA for up to 20 s, then reboot or stay (ticket #8)
+//   2. the verify phase: AP+STA for up to 20 s, then reboot or stay (ticket #8),
+//      and the resolve phase: the weather location checked against the weather
+//      service after the station connects, before the reboot (ticket #9)
 //   3. the Panel screen: a QR on a flat background (drawing side)
 //
 // The QR matrix is built ONCE, when Provisioning is entered, and cached — rendering it
@@ -10,13 +12,18 @@
 #include "prov.h"
 #include "tick.h"
 #include "config.h"
+#include "secrets.h"     // WEATHER_API_KEY only — compile-time, like weather_api.cpp
 
 #include "provform.h"
 #include "provverify.h"
+#include "provresolve.h"
+#include "urlutil.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <HTTPClient.h>
 #include <string.h>
+#include <stdlib.h>
 
 extern "C" {
 #include "qrcode.h"
@@ -135,6 +142,30 @@ static uint32_t g_verifyStart = 0;
 static prov_verify_fail_t g_verifyFail = PROV_VERIFY_FAIL_NONE;
 static char g_verifySsid[33] = "";   // the SSID under test, for logs; the passphrase is never logged
 
+// ── resolve phase (ticket #9) ────────────────────────────────────────────────
+// After a station connect the Board asks the weather service what place name the
+// operator typed, so "Vancouver" and "Vancouvr" lead to different outcomes. The
+// DECISION lives in provresolve.cpp (host-tested); here is the wiring: ONE search
+// call — the same 8 s connect / 10 s receive the normal weather fetch uses, no
+// retry loop (this radio's RX heap has a history, see HANDOFF item 5) — and the
+// result on the page before the Board leaves Provisioning.
+//
+// A resolve failure is a SURVIVABLE failure, shaped like a verify failure: the AP
+// comes back on channel 1, the written values stay, the flag is NOT set, and the
+// operator corrects and Saves again. The two ways it can fail must stay distinct
+// on every surface: "no such place" vs "the service could not be reached".
+// The failure message travels as a pair: the full sentence for the page
+// (Amendment 3) and the short reason for the Panel footer and the serial log.
+// One struct so the pair is always composed together and read together.
+struct ProvFailMessage {
+    char notice[160];
+    char reason[48];
+};
+static ProvFailMessage g_fail = {};
+static char g_resolveEcho[160] = ""; // "Weather resolved: …" — shown before the reboot
+static uint32_t g_resolveGraceUntil = 0;
+static const uint32_t kResolveGraceMs = 8000;  // ≥ one page auto-refresh (5 s)
+
 static void doReboot() { ESP.restart(); }
 
 // The Provisioned flag — the single safety invariant of write-first (ADR-0001
@@ -151,6 +182,19 @@ static bool provIsProvisioned() {
     bool on = p.getBool(kProvDoneKey, false);
     p.end();
     return on;
+}
+
+// THE commit point of write-first (ADR-0001 Amendment 4): set the Provisioned
+// flag, take the AP down, reboot onto the verified network. Every successful
+// path funnels through here, so "the single writer of the flag" lives in one
+// place. (The no-network submit sets the flag on its own path — there is no
+// verified network there to reboot onto, so it has its own log line.)
+static void provCommitAndReboot() {
+    provSaveProvisioned(true);
+    provLeave();   // AP down, station properties restored
+    Serial.println("[prov] rebooting onto the verified network");
+    Serial.flush();
+    doReboot();
 }
 
 // The one sentence the page shows while the verify phase runs (Amendment 3: the
@@ -179,6 +223,42 @@ static void provVerifyBegin(const char* ssid) {
                   ssid, (unsigned)(PROV_VERIFY_BUDGET_MS / 1000));
 }
 
+// ONE attempt to ask the weather service what a place name means (ticket #9).
+// The same budgets the normal weather fetch already runs — 8 s to connect, 10 s
+// to receive — and, deliberately, NO retry loop: this radio's RX heap has a
+// history under bursty traffic (HANDOFF item 5), and one unanswered call is
+// enough to say "the service could not be reached".
+static prov_resolve_outcome_t provResolveAttempt(const char* location,
+                                                char* name, size_t nameCap,
+                                                char* where, size_t whereCap) {
+    String q;
+    urlEncode(location, q);
+    String url = "http://api.weatherapi.com/v1/search.json?key=" + String(WEATHER_API_KEY)
+               + "&q=" + q + "&lang=en";
+    HTTPClient http;
+    http.setConnectTimeout(8000);
+    http.setTimeout(10000);
+    http.begin(url);
+    int code = http.GET();
+    String payload = (code == 200) ? http.getString() : String("");
+    http.end();
+    if (code != 200) return PROV_RESOLVE_ERROR;   // the service could not be reached
+    return provResolveParse(payload.c_str(), payload.length(), name, nameCap, where, whereCap);
+}
+
+// What a FAILED verify or a FAILED resolve both do to the radio: back to AP-ONLY,
+// the AP re-pinned to channel 1. In AP+STA the AP had been forced onto the
+// station's channel, and the unpinned state must never outlive the phase
+// (Amendment 3). The phone, already associated, follows the beacon — SSID, BSSID
+// and passphrase are unchanged.
+static void provRestoreApOnly(const char* kind, const char* reason) {
+    WiFi.disconnect(false, false);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(PROV_AP_SSID, PROV_AP_PASS, PROV_AP_CHANNEL, 0, PROV_AP_MAX_STA);
+    Serial.printf("[prov] %s FAILED (%s) — AP-only ch%d restored; values kept, correct and Save again\n",
+                  kind, reason, PROV_AP_CHANNEL);
+}
+
 static void sendForm(const prov_form_values_t& v, const char* notice, bool isError) {
     // While the verify phase is active the page auto-refreshes, so a phone holding it
     // sees the outcome on its own — the reason lands on the page AND the Panel
@@ -203,12 +283,15 @@ static void handleRoot() {
         sendForm(provFormCurrentValues(),
                  kVerifyingNotice,
                  false);
+    } else if (g_verifyState == PROV_VERIFY_OK && g_resolveEcho[0]) {
+        // The resolved location, echoed while the Board waits out the grace
+        // window before it reboots (ticket #9: the operator sees what was
+        // understood BEFORE it takes effect).
+        sendForm(provFormCurrentValues(), g_resolveEcho, false);
     } else if (g_verifyState == PROV_VERIFY_FAILED) {
-        static char failNotice[80];
-        snprintf(failNotice, sizeof(failNotice),
-                 "Connection failed (%s) — correct the form and Save again.",
-                 provVerifyReasonText(g_verifyFail));
-        sendForm(provFormCurrentValues(), failNotice, true);
+        // The sentence was composed when the failure happened (verify or
+        // resolve), so both surfaces — page and Panel — show the same reason.
+        sendForm(provFormCurrentValues(), g_fail.notice, true);
     } else {
         sendForm(provFormCurrentValues(), nullptr, false);
     }
@@ -520,6 +603,18 @@ void provTick() {
         }
     }
 
+    // The resolve grace window (ticket #9): the location was resolved and saved,
+    // and the page is still being served so the phone's auto-refresh picks up the
+    // echo. Only when the window ends does the Board commit — flag, AP down,
+    // reboot — i.e. the operator saw what was understood before it took effect.
+    if (g_verifyState == PROV_VERIFY_OK && g_resolveGraceUntil &&
+        (long)(millis() - g_resolveGraceUntil) >= 0) {
+        g_resolveGraceUntil = 0;
+        Serial.println("[prov] resolve OK — marking Provisioned");
+        provCommitAndReboot();
+        return;
+    }
+
     // The verify phase's state machine (ticket #8). provverify.cpp is host-tested;
     // this is where it meets the real clock and the real WiFi.status().
     if (g_verifyState == PROV_VERIFY_RUNNING) {
@@ -529,28 +624,58 @@ void provTick() {
         if (next != PROV_VERIFY_RUNNING) {
             g_verifyState = next;
             if (next == PROV_VERIFY_OK) {
-                // THE writer of the Provisioned flag. This is the invariant that makes
-                // write-first safe (Amendment 4): the Board leaves Provisioning for
-                // good only when the credentials have proven to work.
-                provSaveProvisioned(true);
-                Serial.printf("[prov] verify OK — associated with '%s' in %lu s; marking Provisioned\n",
-                              g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
-                provLeave();   // AP down, station properties restored
-                Serial.println("[prov] rebooting onto the verified network");
-                Serial.flush();
-                doReboot();
+                const char* loc = cfgWeatherLocation();
+                if (!loc || !*loc || WEATHER_API_KEY[0] == '\0') {
+                    // No weather to resolve: a blank location is "no weather wanted",
+                    // not a failure, and a build without a key cannot resolve at
+                    // all. Commit exactly as #8 did — THE writer of the Provisioned
+                    // flag; the invariant that makes write-first safe (Amendment 4).
+                    Serial.printf("[prov] verify OK — associated with '%s' in %lu s; marking Provisioned\n",
+                                  g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
+                    provCommitAndReboot();
+                    return;
+                }
+                // The station is connected — the one moment the Board can reach the
+                // weather service without the operator's network being down (ticket
+                // #9). ONE search call; the outcome decides what happens next.
+                char name[64], where[80];
+                prov_resolve_outcome_t r =
+                    provResolveAttempt(loc, name, sizeof name, where, sizeof where);
+                if (r == PROV_RESOLVE_OK) {
+                    cfgSetWeatherLocation(name);
+                    cfgSaveWeather();
+                    snprintf(g_resolveEcho, sizeof g_resolveEcho,
+                             "Weather resolved: %s — the Board is rebooting onto your network now.",
+                             where);
+                    g_resolveGraceUntil = millis() + kResolveGraceMs;
+                    Serial.printf("[prov] verify OK — associated with '%s'; weather '%s' resolved to '%s' (echoing on the page; reboot in %u s)\n",
+                                  g_verifySsid, loc, name, (unsigned)(kResolveGraceMs / 1000));
+                    return;   // the commit is deferred to the grace window above
+                }
+                // A resolve failure is a survivable failure: the AP comes back on
+                // channel 1, the written values stay, the flag is NOT set, and the
+                // operator corrects and Saves again. The two failures stay distinct
+                // on every surface — the place was not found vs the service could
+                // not be reached.
+                if (r == PROV_RESOLVE_NO_MATCH) {
+                    snprintf(g_fail.notice, sizeof g_fail.notice,
+                             "Resolve: no place by that name was found — check the spelling and Save again.");
+                    snprintf(g_fail.reason, sizeof g_fail.reason, "no such place");
+                } else {
+                    snprintf(g_fail.notice, sizeof g_fail.notice,
+                             "Resolve: the service could not be reached — Save again to try once more.");
+                    snprintf(g_fail.reason, sizeof g_fail.reason, "weather service unreachable");
+                }
+                g_verifyState = PROV_VERIFY_FAILED;
+                provRestoreApOnly("resolve", g_fail.reason);
                 return;
             }
             g_verifyFail = fail;
-            // Back to AP-ONLY, and the AP re-pinned to channel 1: AP+STA had been
-            // forcing the AP onto the station's channel, and the unpinned state must
-            // never outlive the phase (Amendment 3). The phone, already associated,
-            // follows the beacon — SSID, BSSID and passphrase are unchanged.
-            WiFi.disconnect(false, false);
-            WiFi.mode(WIFI_AP);
-            WiFi.softAP(PROV_AP_SSID, PROV_AP_PASS, PROV_AP_CHANNEL, 0, PROV_AP_MAX_STA);
-            Serial.printf("[prov] verify FAILED (%s) — AP-only ch%d restored; values kept, correct and Save again\n",
-                          provVerifyReasonText(fail), PROV_AP_CHANNEL);
+            snprintf(g_fail.notice, sizeof g_fail.notice,
+                     "Connection failed (%s) — correct the form and Save again.",
+                     provVerifyReasonText(fail));
+            snprintf(g_fail.reason, sizeof g_fail.reason, "%s", provVerifyReasonText(fail));
+            provRestoreApOnly("verify", g_fail.reason);
         }
     }
 }
@@ -620,7 +745,7 @@ void provLeave() {
     if (!g_active) { Serial.println("[prov] not in Provisioning"); return; }
     if (g_verifyState == PROV_VERIFY_RUNNING) {
         // A PROV stop mid-verify cancels the attempt. The written values stay SAVED
-        // (write-first, Amd 5) and the flag stays unset — but at the next boot the
+        // (write-first, Amd 4) and the flag stays unset — but at the next boot the
         // stored credentials stand: the legacy cfgWifiIsStored() gate re-enters
         // normal operation, so the AP is NOT re-offered and the Board retries the
         // unverified credentials with backoff. Recovery: serial PROV (re-enter
@@ -629,6 +754,15 @@ void provLeave() {
         g_verifyState = PROV_VERIFY_IDLE;
         g_verifyFail = PROV_VERIFY_FAIL_NONE;
         Serial.println("[prov] verify cancelled (PROV stop)");
+    } else if (g_verifyState == PROV_VERIFY_OK && g_resolveGraceUntil) {
+        // A PROV stop inside the resolve grace window cancels the COMMIT: no flag,
+        // no reboot. The resolved location stays SAVED (write-first, Amd 4), and the
+        // stored credentials stand as before — Provisioning simply stays up.
+        g_resolveGraceUntil = 0;
+        g_resolveEcho[0] = '\0';
+        g_verifyState = PROV_VERIFY_IDLE;
+        WiFi.disconnect(false, false);
+        Serial.println("[prov] resolve cancelled (PROV stop) — no flag set; Provisioning stays up");
     }
     provStop();
     provSaveFlag(false);
@@ -670,8 +804,11 @@ void provPrintStatus() {
     if (g_verifyState == PROV_VERIFY_RUNNING)
         Serial.printf("[prov] verify running: ssid='%s' (%lu s elapsed)\n",
                       g_verifySsid, (unsigned long)(provVerifyElapsed(g_verifyStart, millis()) / 1000));
+    else if (g_verifyState == PROV_VERIFY_OK && g_resolveGraceUntil)
+        Serial.printf("[prov] resolve OK: grace window, reboots in %u s\n",
+                      (unsigned)((g_resolveGraceUntil - millis()) / 1000));
     else if (g_verifyState == PROV_VERIFY_FAILED)
-        Serial.printf("[prov] last verify FAILED (%s); values kept\n", provVerifyReasonText(g_verifyFail));
+        Serial.printf("[prov] last verify FAILED (%s); values kept\n", g_fail.reason);
     Serial.printf("[prov] provisioned flag: %s\n", provIsProvisioned() ? "set" : "unset");
 }
 
@@ -815,7 +952,10 @@ void provRender(uint16_t* buf, int w, int h) {
         snprintf(line, sizeof(line), "VERIFYING  %lus left", (unsigned long)(leftMs / 1000));
         footer = line;
     } else if (g_verifyState == PROV_VERIFY_FAILED) {
-        snprintf(line, sizeof(line), "FAILED  %s", provVerifyReasonText(g_verifyFail));
+        // g_fail.reason holds the short reason for whichever phase failed — the verify
+        // reason, or "no such place" / "weather service unreachable" for a resolve
+        // failure, where g_verifyFail is FAIL_NONE and would render blank.
+        snprintf(line, sizeof(line), "FAILED  %s", g_fail.reason);
         footer = line;
     }
     drawCentered(kFooterY, ink, 0, footer);

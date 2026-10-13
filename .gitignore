@@ -27,11 +27,13 @@ usage.jsonl
 spike/
 spike_hid_src/
 
-# host test build artifacts (tools/configtest, tools/qrtest, tools/provformtest)
+# host test build artifacts (tools/configtest, tools/qrtest, tools/provformtest,
+# tools/provverifytest, tools/provresolvetest)
 tools/configtest/*.exe
 tools/qrtest/*.exe
 tools/provformtest/*.exe
 tools/provverifytest/*.exe
+tools/provresolvetest/*.exe
 
 # generated provisioning-form captures + probe logs (contain the user's network details — local only)
 tools/form-*.html

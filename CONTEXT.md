@@ -81,6 +81,17 @@ the operator's phone has already joined, so the pin has no remaining job. Every 
 moment in Provisioning is still pinned to channel 1.
 _Avoid_: unpinned AP, roaming, channel fallback
 
+**Resolve phase**:
+The moment inside the verify phase, after the station has connected, in which the Board
+asks the weather service what the typed location means — one call, no retry loop — so
+"Vancouver" and "Vancouvr" lead to different outcomes. A blank location skips it ("no
+weather wanted" is not a failure). A no-such-place or an unreachable service is a
+survivable failure like a failed verify: the AP comes back on channel 1, the written
+values stay, the flag is NOT set; the two reasons stay distinct on every surface. On
+success the resolved name replaces the raw input in the config and is echoed on the page
+before the Board reboots onto the verified network.
+_Avoid_: place check, location validation, geocode
+
 **Factory default**:
 The values in `secrets.h`. They are what a Board with no provisioned values uses, and
 they are never the source of truth once Provisioning has run.

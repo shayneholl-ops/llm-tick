@@ -185,6 +185,44 @@ Note the first path deliberately keys on "no WiFi SSID was **ever stored**"
 explicitly **not** the connect-failure path the Decision forbids, and the gate in
 `tickLogic()` keeps them apart.
 
+## Amendment 6 (2026-10-12): the verify phase resolves the weather location
+
+Amendments 3 and 4 settle how a submitted provision is tested and when the Board may
+reboot. They leave one value untested: the weather location. It is a string, and a
+misspelled one (or a place the service does not know) would sit in the config
+permanently, silently producing nothing — exactly the class of silent failure the
+Provisioned flag exists to prevent, one field over.
+
+- **The verify phase gains a resolve sub-phase: after the station connects, before the
+  flag and the reboot.** The station link is the one moment the Board can reach the
+  weather service without the operator's network being down, and "before it takes
+  effect" means the operator must be able to see what was understood.
+- **One call, no retry loop** — the same 8 s connect / 10 s receive budgets the normal
+  weather fetch already runs. This radio's RX heap has a history under bursty traffic
+  (HANDOFF item 5), and one unanswered call is enough to say the service could not be
+  reached.
+- **A blank location is not a failure.** It means no weather was wanted, so the Board
+  commits exactly as the verify phase did in Amendment 4. A build with no weather key
+  commits the same way: it cannot resolve, and must not block provisioning over it.
+- **The existing weather fetch is not reused, and here is why.** The normal path
+  (`WeatherAPI::fetch`, `forecast.json`) is shaped for display: it parses a `current`
+  block and reports a bare failure with no answer. The resolve needs the service's
+  *place-name* answer — `search.json` returns the list of places the service knows,
+  which is the actual question ("which place did you mean?") the raw fetch cannot
+  answer. So the resolve makes its own one call, but borrows the fetch's budgets
+  (8 s connect / 10 s receive) and its no-retry discipline, so the radio sees the
+  same traffic shape it has already proven safe.
+- **The two failures stay distinct on every surface, as Amendment 3 requires of a
+  failed verify:** "no place by that name was found" (the service answered; it knows no
+  such place) vs "the service could not be reached" (the call itself failed). Both are
+  survivable failures in Amendment 4's sense: the AP comes back on channel 1, the
+  written values stay, the flag is NOT set, and the operator corrects and Saves again.
+  A failed resolve never sets the flag.
+- **On success the resolved canonical name replaces the raw input in the config** —
+  "Vancouver" and a spelling of it resolve to the same stored value, which is what makes
+  the weather fetch deterministic — and it is **echoed on the page before the reboot**,
+  so the operator confirms what was actually understood before it takes effect.
+
 ## Decision
 
 Provisioning is entered **only** when the Board has never been provisioned, or on an

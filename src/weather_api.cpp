@@ -1,12 +1,15 @@
 #include "weather_api.h"
 #include "config.h"
+#include "urlutil.h"    // the tick fetch encodes the location like the resolve does
 #include "secrets.h"     // WEATHER_API_KEY only — the key stays compile-time (out of F2 scope)
 
 bool WeatherAPI::fetch() {
   if (WiFi.status() != WL_CONNECTED || WEATHER_API_KEY[0] == '\0') return false;
 
+  String q;
+  urlEncode(cfgWeatherLocation(), q);
   String url = "http://api.weatherapi.com/v1/forecast.json?key=" + String(WEATHER_API_KEY)
-             + "&q=" + String(cfgWeatherLocation()) + "&days=1&aqi=yes&alerts=no";
+             + "&q=" + q + "&days=1&aqi=yes&alerts=no";
   HTTPClient http;
   http.setConnectTimeout(8000);
   http.setTimeout(10000);
